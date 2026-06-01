@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安全生产每日简报智能生成与校验系统 (无服务器版)</title>
+    <!-- Google 字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome 图标 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="static/style.css">
+    <!-- 引入 Pyodide 浏览器运行库 (使用 Fastly 加速 CDN，解决南大镜像防盗链重定向问题，国内秒加载) -->
+    <script src="https://fastly.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+</head>
+<body>
+    <!-- 背景流光装饰 -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+    <div class="bg-glow bg-glow-3"></div>
+
+    <div class="container">
+        <!-- 头部标题 -->
+        <header class="app-header">
+            <div class="logo">
+                <i class="fa-solid fa-microchip icon-spin"></i>
+            </div>
+            <h1>每日生产日报智能生成与校验</h1>
+            <p class="subtitle">AUTOMATED DAILY REPORT GENERATOR & VALIDATOR</p>
+            <div class="badge-container">
+                <span class="badge"><i class="fa-solid fa-code-fork"></i> 架构：浏览器 WebAssembly</span>
+                <span class="badge success"><i class="fa-solid fa-lock"></i> 100% 本地隐私安全</span>
+            </div>
+        </header>
+
+        <!-- 系统环境加载进度指示区 -->
+        <div id="env-loader-panel" class="env-loader-panel glass-panel">
+            <div class="loader-status">
+                <i id="env-icon" class="fa-solid fa-circle-notch fa-spin text-secondary"></i>
+                <span id="env-text">正在启动浏览器 Python 虚拟环境 (加载中)...</span>
+            </div>
+            <div class="progress-bar-container">
+                <div id="env-progress" class="progress-bar" style="width: 5%;"></div>
+            </div>
+        </div>
+
+        <!-- 主体网格布局 -->
+        <main class="main-grid">
+            
+            <!-- 左侧：输入控制区 -->
+            <section class="control-panel glass-panel">
+                <div class="panel-header">
+                    <i class="fa-solid fa-sliders"></i>
+                    <h2>数据配置面板</h2>
+                </div>
+
+                <form id="report-form" enctype="multipart/form-data">
+                    
+                    <!-- 1. 文件上传区 -->
+                    <div class="section-block">
+                        <h3 class="section-title"><span class="num">1</span>上传 Excel 数据源</h3>
+                        <div class="file-uploads">
+                            <!-- MIS数据上传 -->
+                            <div class="file-upload-card" id="mis-upload-zone">
+                                <input type="file" id="mis_file" name="mis_file" accept=".xlsx" required hidden disabled>
+                                <div class="card-icon"><i class="fa-solid fa-database"></i></div>
+                                <div class="card-text">
+                                    <span class="title">MIS数据</span>
+                                    <span class="desc" id="mis-file-name">请先等待环境初始化...</span>
+                                </div>
+                            </div>
+                            
+                            <!-- 称重数据上传 -->
+                            <div class="file-upload-card" id="weighing-upload-zone">
+                                <input type="file" id="weighing_file" name="weighing_file" accept=".xlsx" required hidden disabled>
+                                <div class="card-icon"><i class="fa-solid fa-weight-hanging"></i></div>
+                                <div class="card-text">
+                                    <span class="title">称重数据</span>
+                                    <span class="desc" id="weighing-file-name">请先等待环境初始化...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. 文字粘贴区 -->
+                    <div class="section-block">
+                        <h3 class="section-title"><span class="num">2</span>粘贴文本数据</h3>
+                        
+                        <div class="text-inputs-container">
+                            <!-- 增城建废 (自动识别) -->
+                            <div class="textarea-wrapper">
+                                <label for="zengcheng_text"><i class="fa-solid fa-building-flag icon-color-1"></i> 增城建废文字 (支持自动识别)</label>
+                                <textarea id="zengcheng_text" name="zengcheng_text" placeholder="例如：
+5月31日
+装修垃圾进厂量：479.28吨
+再生水稳量：289.21吨
+再生石粉量：29.96吨
+砖渣：0吨
+混凝土块：0吨" required disabled></textarea>
+                            </div>
+
+                            <!-- 白云建废 -->
+                            <div class="textarea-wrapper">
+                                <label for="baiyun_text"><i class="fa-solid fa-industry icon-color-2"></i> 白云建废文字 (白云建废文字)</label>
+                                <textarea id="baiyun_text" name="baiyun_text" placeholder="粘贴白云建废的日报文字内容..." required disabled></textarea>
+                            </div>
+
+                            <!-- 环服公司接收污水 -->
+                            <div class="textarea-wrapper">
+                                <label for="huanfu_text"><i class="fa-solid fa-droplet icon-color-3"></i> 环服公司接收污水文字</label>
+                                <textarea id="huanfu_text" name="huanfu_text" placeholder="粘贴环服公司接收污水的文本段落..." required disabled></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3. 检查填报项 -->
+                    <div class="section-block">
+                        <div class="section-header-row">
+                            <h3 class="section-title"><span class="num">3</span>日常/专项检查填报</h3>
+                            <button type="button" id="add-check-btn" class="btn-secondary" disabled><i class="fa-solid fa-plus"></i> 添加检查项</button>
+                        </div>
+                        <div id="check-list-container" class="check-list">
+                            <!-- 动态生成的检查项将放在这里 -->
+                        </div>
+                    </div>
+
+                    <!-- 提交生成 -->
+                    <button type="submit" id="submit-btn" class="btn-primary" disabled>
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> 智能校验并生成日报
+                    </button>
+                </form>
+            </section>
+
+            <!-- 右侧：生成与校验结果展示 -->
+            <section class="result-panel glass-panel">
+                <div class="panel-header">
+                    <i class="fa-solid fa-chart-line"></i>
+                    <h2>分析与校验报告</h2>
+                </div>
+
+                <!-- 默认占位提示 -->
+                <div id="result-placeholder" class="result-placeholder">
+                    <div class="placeholder-icon">
+                        <i class="fa-solid fa-radar fa-spin-slow"></i>
+                    </div>
+                    <h3>等待生成</h3>
+                    <p>在左侧配置好文件和数据后，点击“智能校验并生成日报”</p>
+                </div>
+
+                <!-- 结果主要展示区域（默认隐藏） -->
+                <div id="result-content" class="result-content" style="display: none;">
+                    
+                    <!-- 校验预警卡片 -->
+                    <div id="verification-card" class="verification-card success">
+                        <div class="status-icon"><i id="v-icon" class="fa-solid fa-circle-check"></i></div>
+                        <div class="status-text">
+                            <h4 id="v-status-title">校验通过</h4>
+                            <p id="v-status-desc">环服公司接收污水数量相加核对无误！</p>
+                        </div>
+                    </div>
+
+                    <!-- 提取数据概览 -->
+                    <div class="preview-sections">
+                        
+                        <!-- 增城建废数据提取结果 -->
+                        <div class="preview-card">
+                            <h4 class="card-subtitle"><i class="fa-solid fa-building-flag icon-color-1"></i> 增城建废数据识别结果</h4>
+                            <ul class="data-list" id="zc-preview-list">
+                                <!-- 动态注入 -->
+                            </ul>
+                        </div>
+
+                        <!-- 白云建废数据提取结果 -->
+                        <div class="preview-card">
+                            <h4 class="card-subtitle"><i class="fa-solid fa-industry icon-color-2"></i> 白云建废数据识别结果</h4>
+                            <ul class="data-list" id="by-preview-list">
+                                <!-- 动态注入 -->
+                            </ul>
+                        </div>
+
+                        <!-- 污水转运计算结果 -->
+                        <div class="preview-card">
+                            <h4 class="card-subtitle"><i class="fa-solid fa-droplet icon-color-3"></i> 污水外运数据 (称重计算)</h4>
+                            <ul class="data-list" id="sewage-preview-list">
+                                <!-- 动态注入 -->
+                            </ul>
+                        </div>
+
+                        <!-- 环服接收污水对比 -->
+                        <div class="preview-card full-width">
+                            <h4 class="card-subtitle"><i class="fa-solid fa-scale-balanced text-primary"></i> 环服公司接收污水数据详情</h4>
+                            <div class="comparison-grid" id="hf-comparison-grid">
+                                <!-- 动态注入 -->
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- 下载成品报表按钮 -->
+                    <a id="download-link" href="#" class="btn-download" download>
+                        <i class="fa-solid fa-cloud-arrow-down"></i> 下载成品 Excel 报表
+                    </a>
+
+                </div>
+
+            </section>
+
+        </main>
+    </div>
+
+    <!-- 加载遮罩 -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loader">
+            <div class="spinner"></div>
+            <h3>正在执行浏览器 Python Wasm 计算中...</h3>
+            <p>基于 pandas 和 openpyxl 本地解析及数据校验，请稍候</p>
+        </div>
+    </div>
+
+    <!-- 提示框 -->
+    <div id="toast" class="toast"></div>
+
+    <script src="static/main.js?v=2.1"></script>
+</body>
+</html>
