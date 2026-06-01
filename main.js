@@ -66,10 +66,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!logicResp.ok) throw new Error("无法读取本地核心 Python 处理逻辑脚本！");
             pythonCoreCode = await logicResp.text();
 
-            // 步骤 B: 启动 Pyodide Wasm (使用中科大国内镜像加速源，确保大陆网络秒加载)
+            // 步骤 B: 启动 Pyodide Wasm (使用南京大学国内高速镜像，确保大陆网络秒加载)
             updateProgress(35, "正在启动浏览器 Python 虚拟环境 (1/3)...");
             pyodideInstance = await loadPyodide({
-                indexURL: "https://mirrors.ustc.edu.cn/pyodide/v0.23.4/full/"
+                indexURL: "https://mirrors.nju.edu.cn/pyodide/v0.23.4/full/"
             });
 
             // 步骤 C: 安装依赖包
