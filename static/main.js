@@ -31,7 +31,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const zcPreviewList = document.getElementById('zc-preview-list');
     const byPreviewList = document.getElementById('by-preview-list');
     const sewagePreviewList = document.getElementById('sewage-preview-list');
-    const hfComparisonGrid = document.getElementById('hf-comparison-grid');
     const downloadLink = document.getElementById('download-link');
     
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -111,7 +110,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         weighingInput.disabled = false;
         document.getElementById('zengcheng_text').disabled = false;
         document.getElementById('baiyun_text').disabled = false;
-        document.getElementById('huanfu_text').disabled = false;
         addCheckBtn.disabled = false;
         document.getElementById('submit-btn').disabled = false;
 
@@ -260,7 +258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 将文本输入变量注入 Python 全局作用域
             pyodideInstance.globals.set("baiyun_text", document.getElementById('baiyun_text').value);
             pyodideInstance.globals.set("zengcheng_text", document.getElementById('zengcheng_text').value);
-            pyodideInstance.globals.set("huanfu_text", document.getElementById('huanfu_text').value);
+
 
             // 收集检查项数据
             const checkInputs = checkListContainer.querySelectorAll('input[name="check-content"]');
@@ -310,18 +308,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         resultPlaceholder.style.display = 'none';
         resultContent.style.display = 'flex';
 
-        // 1) 校验预警卡片
-        const cr = data.check_result;
-        verificationCard.className = `verification-card ${cr.status}`;
-        if (cr.status === 'success') {
-            vIcon.className = 'fa-solid fa-circle-check';
-            vStatusTitle.textContent = '校验通过';
-            vStatusDesc.textContent = cr.message;
-        } else {
-            vIcon.className = 'fa-solid fa-circle-exclamation';
-            vStatusTitle.textContent = '数据校验异常';
-            vStatusDesc.textContent = cr.message;
-        }
+        // 1) 校验预警卡片 —— 始终显示计算完成
+        verificationCard.className = 'verification-card success';
+        vIcon.className = 'fa-solid fa-circle-check';
+        vStatusTitle.textContent = '计算完成';
+        vStatusDesc.textContent = '污水运输数据已根据称重数据自动计算完成';
 
         // 2) 增城建废提取结果
         const zc = data.parsed_data.zengcheng;
@@ -342,50 +333,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             <li><span class="label">再生水稳</span><span class="value">${by.zaishengshuiwen} 吨</span></li>
         `;
 
-        // 4) 称重污水外运
+        // 4) 污水运输数据（新版：5项）
         const sew = data.parsed_data.sewage;
         sewagePreviewList.innerHTML = `
-            <li><span class="label">污水外运总量</span><span class="value highlight">${sew.total.toFixed(2)} 吨</span></li>
-            <li><span class="label">其中去环服</span><span class="value">${sew.to_hf.toFixed(2)} 吨</span></li>
-            <li><span class="label">去电厂</span><span class="value">${sew.to_power.toFixed(2)} 吨</span></li>
-        `;
-
-        // 5) 环服污水详情对比
-        const hf = data.parsed_data.huanfu;
-        
-        hfComparisonGrid.innerHTML = `
-            <div class="comp-box highlight">
-                <span class="title">文本总接收量</span>
-                <span class="num">${hf['总量'].toFixed(2)} 吨</span>
-            </div>
-            <div class="comp-box success">
-                <span class="title">称重算出去环服</span>
-                <span class="num">${sew.to_hf.toFixed(2)} 吨</span>
-            </div>
-            <div class="comp-box">
-                <span class="title">白云区接收</span>
-                <span class="num">${hf['白云区'].toFixed(2)} 吨</span>
-            </div>
-            <div class="comp-box">
-                <span class="title">人和镇接收</span>
-                <span class="num">${hf['人和镇'].toFixed(2)} 吨</span>
-            </div>
-            <div class="comp-box">
-                <span class="title">太和镇接收</span>
-                <span class="num">${hf['太和镇'].toFixed(2)} 吨</span>
-            </div>
-            <div class="comp-box">
-                <span class="title">云埔街道接收</span>
-                <span class="num">${hf['云埔街道'].toFixed(2)} 吨</span>
-            </div>
-            <div class="comp-box">
-                <span class="title">九龙镇接收</span>
-                <span class="num">${hf['九龙镇'].toFixed(2)} 吨</span>
-            </div>
-            <div class="comp-box">
-                <span class="title">天河城管接收</span>
-                <span class="num">${hf['天河城管'].toFixed(2)} 吨</span>
-            </div>
+            <li><span class="label">广州市生活垃圾污水运输总量</span><span class="value highlight">${sew.total.toFixed(2)} 吨</span></li>
+            <li><span class="label">环服公司处置</span><span class="value">${sew.to_huanfu.toFixed(2)} 吨</span></li>
+            <li><span class="label">各资源热力电厂处置</span><span class="value">${sew.to_power.toFixed(2)} 吨</span></li>
+            <li><span class="label">环境集团承运</span><span class="value">${sew.by_huantou.toFixed(2)} 吨</span></li>
+            <li><span class="label">社会单位承运</span><span class="value">${sew.by_social.toFixed(2)} 吨</span></li>
         `;
 
         // 6) 更新本地下载二进制

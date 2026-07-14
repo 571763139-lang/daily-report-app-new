@@ -15,22 +15,28 @@ MIS_FILE = "mis_file.xlsx"
 WEIGHING_FILE = "weighing_file.xlsx"
 
 # 全局变量由 JavaScript 动态注入：
-# baiyun_text, zengcheng_text, huanfu_text, checks_json
+# baiyun_text, zengcheng_text, checks_json
 
 def process_weighing_data(weighing_file):
-    """计算污水外运量数据，接收文件路径"""
+    """计算污水运输数据（新版：按处置单位和运输单位分别汇总）"""
     try:
         df = pd.read_excel(weighing_file)
-        df_filtered = df[df['行政区域'].fillna('') != '白云区']
-        df_filtered = df_filtered[df_filtered['收集者'].fillna('').str.contains('环投环境')]
 
-        total = df_filtered['垃圾重量'].sum()
-        to_hf = df_filtered[df_filtered['货物去向'].fillna('').str.contains('兴丰')]['垃圾重量'].sum()
-        to_power = total - to_hf
-        return round(total, 2), round(to_hf, 2), round(to_power, 2)
+        # 广州市生活垃圾污水运输总量 = 所有垃圾重量之和
+        total = df['垃圾重量'].sum()
+
+        # 按处置单位分
+        to_huanfu = df[df['货物去向'].fillna('').str.contains('兴丰')]['垃圾重量'].sum()  # 环服公司处置（去兴丰生活垃圾填埋场）
+        to_power = df[df['货物去向'].fillna('').str.contains('资源热力电厂')]['垃圾重量'].sum()  # 各资源热力电厂处置
+
+        # 按运输单位分
+        by_huantou = df[df['收集者'].fillna('').str.contains('环投环境')]['垃圾重量'].sum()  # 环境集团承运
+        by_social = total - by_huantou  # 社会单位承运
+
+        return round(total, 2), round(to_huanfu, 2), round(to_power, 2), round(by_huantou, 2), round(by_social, 2)
     except Exception as e:
         print(f"❌ 读取称重数据失败: {e}")
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
 
 
 def extract_float(pattern, text):
@@ -156,8 +162,8 @@ def copy_system_data_sequential(raw_sheet, tmpl_sheet):
                 tmpl_search_start = found_tmpl_r + 1
 
 
-def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_hf, to_pwr, hf_data, checks):
-    """【表尾段落文本内手术】包含检查项的填报与污水转运数据的替换"""
+def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_huanfu, to_power, by_huantou, by_social, checks):
+    """【表尾段落文本内手术】包含检查项的填报与污水转运数据的替换（新版格式）"""
     boiler_str, turbine_str, date_str = None, None, ""
 
     # 1. 解析日期标题
@@ -214,22 +220,16 @@ def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_hf, to_pwr, hf_d
                     new_val = re.sub(r'1\.检查：[\s\S]*?(?=2\.垃圾转运站)', check_text + "\n", new_val)
                     changed = True
 
-                if "污水" in new_val or "转运" in new_val or "环服" in new_val:
+                if "污水" in new_val or "转运" in new_val or "运输总量" in new_val:
                     if date_str:
                         new_val = re.sub(r'[0O零]+月[0O零]+日', date_str, new_val)
 
                     rules = [
-                        (r'(污水外运量共计[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{tot_sewage}\\2'),
-                        (r'(其中去环服[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{to_hf}\\2'),
-                        (r'(去电厂[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{to_pwr}\\2'),
-                        (r'(污水共计[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{hf_data.get("总量", 0)}\\2'),
-                        (r'(接收环境集团.*?[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{to_hf}\\2'),
-                        (r'(白云区[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{hf_data.get("白云区", 0)}\\2'),
-                        (r'(人和镇[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{hf_data.get("人和镇", 0)}\\2'),
-                        (r'(天河城管局[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{hf_data.get("天河城管", 0)}\\2'),
-                        (r'(九龙镇[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{hf_data.get("九龙镇", 0)}\\2'),
-                        (r'(太和镇[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{hf_data.get("太和镇", 0)}\\2'),
-                        (r'(云埔街道[：:]?\s*)[0\.]+(\s*吨)', f'\\g<1>{hf_data.get("云埔街道", 0)}\\2'),
+                        (r'(运输总量为)[0\.]+(吨)', f'\\g<1>{tot_sewage}\\2'),
+                        (r'(环服公司处置)[0\.]+(吨)', f'\\g<1>{to_huanfu}\\2'),
+                        (r'(各资源热力电厂处置)[0\.]+(吨)', f'\\g<1>{to_power}\\2'),
+                        (r'(环境集团承运)[0\.]+(吨)', f'\\g<1>{by_huantou}\\2'),
+                        (r'(社会单位承运)[0\.]+(吨)', f'\\g<1>{by_social}\\2'),
                     ]
                     for pattern, repl in rules:
                         new_val = re.sub(pattern, repl, new_val)
@@ -246,8 +246,8 @@ def main():
     except Exception:
         checks = []
 
-    # 1. 污水数据统计
-    tot_sewage, to_hf, to_pwr = process_weighing_data(WEIGHING_FILE)
+    # 1. 污水数据统计（新版：5项返回值）
+    tot_sewage, to_huanfu, to_power, by_huantou, by_social = process_weighing_data(WEIGHING_FILE)
 
     # 2. 解析白云建废文字数据
     by_shizha = extract_float(r'石渣）?[^\d]*([\d.]+)', baiyun_text)
@@ -266,28 +266,7 @@ def main():
     z_zz = extract_float(r'砖渣[^\d]*([\d.]+)', zengcheng_text)
     z_hnt = extract_float(r'混凝土(?:块)?[^\d]*([\d.]+)', zengcheng_text)
 
-    # 4. 解析环服接收污水数据
-    hf_data = {
-        '总量': extract_float(r'进场总量[^\d]*([\d.]+)', huanfu_text),
-        '白云区': extract_float(r'白云区[^\d]*([\d.]+)', huanfu_text),
-        '人和镇': extract_float(r'人和镇[^\d]*([\d.]+)', huanfu_text),
-        '太和镇': extract_float(r'太和镇[^\d]*([\d.]+)', huanfu_text),
-        '云埔街道': extract_float(r'云埔街道[^\d]*([\d.]+)', huanfu_text),
-        '九龙镇': extract_float(r'九龙镇[^\d]*([\d.]+)', huanfu_text),
-        '天河城管': extract_float(r'天河城管局[^\d]*([\d.]+)', huanfu_text),
-    }
-
-    # 5. 数据校验比对
-    calc_hf_sum = to_hf + hf_data['白云区'] + hf_data['人和镇'] + hf_data['太和镇'] + \
-                  hf_data['云埔街道'] + hf_data['九龙镇'] + hf_data['天河城管']
-
-    check_status = "success"
-    check_message = "环服公司接收污水数量相加核对无误！"
-    if abs(calc_hf_sum - hf_data['总量']) >= 0.01:
-        check_status = "warning"
-        check_message = f"环服公司接收污水数量有误！(各项相加={round(calc_hf_sum, 2)}, 但文本总量={hf_data['总量']})"
-
-    # 6. 读取工作簿填充
+    # 4. 读取工作簿填充
     tmpl_wb = openpyxl.load_workbook(TEMPLATE_FILE)
     tmpl_sheet = tmpl_wb.active
     raw_wb = openpyxl.load_workbook(MIS_FILE)
@@ -326,7 +305,7 @@ def main():
     inject_manual_data(tmpl_sheet, ["再生骨料1-2石", "再生1-2石", "再生骨料"], by_zaisheng12, r_by, r_sewage)
     inject_manual_data(tmpl_sheet, ["再生水稳"], by_zaishengshuiwen, r_by, r_sewage)
 
-    fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_hf, to_pwr, hf_data, checks)
+    fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_huanfu, to_power, by_huantou, by_social, checks)
 
     # 保存
     tmpl_wb.save("output_file.xlsx")
@@ -335,8 +314,10 @@ def main():
     parsed_preview = {
         "sewage": {
             "total": tot_sewage,
-            "to_hf": to_hf,
-            "to_power": to_pwr
+            "to_huanfu": to_huanfu,
+            "to_power": to_power,
+            "by_huantou": by_huantou,
+            "by_social": by_social
         },
         "baiyun": {
             "hunningtu": by_hunningtu,
@@ -353,17 +334,12 @@ def main():
             "再生石粉": z_sf,
             "砖渣": z_zz,
             "混凝土块": z_hnt
-        },
-        "huanfu": hf_data
+        }
     }
 
     global output_json_str
     output_json_str = json.dumps({
         "success": True,
-        "check_result": {
-            "status": check_status,
-            "message": check_message
-        },
         "parsed_data": parsed_preview,
         "filename": output_filename
     })

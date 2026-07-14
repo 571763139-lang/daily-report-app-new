@@ -104,11 +104,6 @@
                                 <textarea id="baiyun_text" name="baiyun_text" placeholder="粘贴白云建废的日报文字内容..." required disabled></textarea>
                             </div>
 
-                            <!-- 环服公司接收污水 -->
-                            <div class="textarea-wrapper">
-                                <label for="huanfu_text"><i class="fa-solid fa-droplet icon-color-3"></i> 环服公司接收污水文字</label>
-                                <textarea id="huanfu_text" name="huanfu_text" placeholder="粘贴环服公司接收污水的文本段落..." required disabled></textarea>
-                            </div>
                         </div>
                     </div>
 
@@ -153,8 +148,8 @@
                     <div id="verification-card" class="verification-card success">
                         <div class="status-icon"><i id="v-icon" class="fa-solid fa-circle-check"></i></div>
                         <div class="status-text">
-                            <h4 id="v-status-title">校验通过</h4>
-                            <p id="v-status-desc">环服公司接收污水数量相加核对无误！</p>
+                            <h4 id="v-status-title">计算完成</h4>
+                            <p id="v-status-desc">污水运输数据已根据称重数据自动计算完成</p>
                         </div>
                     </div>
 
@@ -177,21 +172,15 @@
                             </ul>
                         </div>
 
-                        <!-- 污水转运计算结果 -->
+                        <!-- 污水运输计算结果 -->
                         <div class="preview-card">
-                            <h4 class="card-subtitle"><i class="fa-solid fa-droplet icon-color-3"></i> 污水外运数据 (称重计算)</h4>
+                            <h4 class="card-subtitle"><i class="fa-solid fa-droplet icon-color-3"></i> 污水运输数据 (称重计算)</h4>
                             <ul class="data-list" id="sewage-preview-list">
                                 <!-- 动态注入 -->
                             </ul>
                         </div>
 
-                        <!-- 环服接收污水对比 -->
-                        <div class="preview-card full-width">
-                            <h4 class="card-subtitle"><i class="fa-solid fa-scale-balanced text-primary"></i> 环服公司接收污水数据详情</h4>
-                            <div class="comparison-grid" id="hf-comparison-grid">
-                                <!-- 动态注入 -->
-                            </div>
-                        </div>
+
 
                     </div>
 
@@ -219,6 +208,6 @@
     <!-- 提示框 -->
     <div id="toast" class="toast"></div>
 
-    <script src="static/main.js?v=2.1"></script>
+    <script src="static/main.js?v=3.0"></script>
 </body>
 </html>
