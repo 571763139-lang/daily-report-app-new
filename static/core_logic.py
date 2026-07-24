@@ -27,7 +27,7 @@ def process_weighing_data(weighing_file):
 
         # 按处置单位分
         to_huanfu = df[df['货物去向'].fillna('').str.contains('兴丰')]['垃圾重量'].sum()  # 环服公司处置（去兴丰生活垃圾填埋场）
-        to_power = df[df['货物去向'].fillna('').str.contains('资源热力电厂')]['垃圾重量'].sum()  # 各资源热力电厂处置
+        to_power = df[df['货物去向'].fillna('').str.contains('资源热力电厂|生物质处理厂')]['垃圾重量'].sum()  # 各资源热力电厂处置（含生物质处理厂）
 
         # 按运输单位分
         by_huantou = df[df['收集者'].fillna('').str.contains('环投环境')]['垃圾重量'].sum()  # 环境集团承运
