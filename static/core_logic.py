@@ -2,6 +2,7 @@ import os
 import re
 import io
 import json
+import math
 import warnings
 from datetime import datetime, timedelta
 import pandas as pd
@@ -10,12 +11,12 @@ import openpyxl
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 # 虚拟文件系统中的路径
-TEMPLATE_FILE = "新模板.xlsx"
+TEMPLATE_FILE = "新模板_v4.xlsx"
 MIS_FILE = "mis_file.xlsx"
 WEIGHING_FILE = "weighing_file.xlsx"
 
 # 全局变量由 JavaScript 动态注入：
-# baiyun_text, zengcheng_text, checks_json
+# baiyun_text, zengcheng_text, checks_json, fly_ash_amount
 
 def process_weighing_data(weighing_file):
     """计算污水运输数据（新版：按处置单位和运输单位分别汇总）"""
@@ -162,18 +163,28 @@ def copy_system_data_sequential(raw_sheet, tmpl_sheet):
                 tmpl_search_start = found_tmpl_r + 1
 
 
-def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_huanfu, to_power, by_huantou, by_social, checks):
-    """【表尾段落文本内手术】包含检查项的填报与污水转运数据的替换（新版格式）"""
-    boiler_str, turbine_str, date_str = None, None, ""
+def fill_report_table_data(sheet, fly_ash, to_huanfu, to_power, by_huantou, by_social):
+    """按指标标签填入新版模板，避免插行后依赖固定行号。"""
+    values = {
+        "1.5-飞灰外运资源化（吨）": fly_ash,
+        "环境集团（吨）": by_huantou,
+        "社会单位（吨）": by_social,
+        "环服公司（吨）": to_huanfu,
+        "各资源热力电厂（吨）": to_power,
+    }
+    for label, value in values.items():
+        rows = [r for r in range(1, sheet.max_row + 1)
+                if any(isinstance(sheet.cell(r, c).value, str)
+                       and sheet.cell(r, c).value.replace(' ', '').replace('\n', '') == label
+                       for c in (3, 4))]
+        if len(rows) != 1:
+            raise ValueError(f"新版模板指标缺失或重复：{label}，请刷新页面加载新版模板")
+        sheet.cell(rows[0], 5).value = float(value)
 
-    # 1. 解析日期标题
-    for c in range(1, 5):
-        val = str(raw_sheet.cell(1, c).value)
-        if "生产运营情况" in val:
-            match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', val)
-            if match:
-                date_str = f"{int(match.group(2))}月{int(match.group(3))}日"
-            break
+
+def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, checks):
+    """更新机炉运行情况和检查内容；污水数据由表格单独填入。"""
+    boiler_str, turbine_str = None, None
 
     # 2. 获取锅炉/汽机正常数
     for r in range(1, raw_sheet.max_row + 1):
@@ -186,18 +197,17 @@ def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_huanfu, to_power
 
     # 3. 构造检查部分的替换字符串
     if checks:
-        num_symbols = ["①", "②", "③", "④", "⑤", "⑥"]
         check_lines = []
-        for i, chk in enumerate(checks[:6]):
+        for chk in checks[:6]:
             val_strip = str(chk).strip()
             if val_strip and val_strip != "无":
-                check_lines.append(f"{num_symbols[i]}.{val_strip}")
+                check_lines.append(f"{len(check_lines) + 1}.{val_strip}")
         if check_lines:
-            check_text = "1.检查：\n" + "\n".join(check_lines)
+            check_text = "检查：\n" + "\n".join(check_lines)
         else:
-            check_text = "1.检查：\n  无。"
+            check_text = "检查：\n  无。"
     else:
-        check_text = "1.检查：\n  无。"
+        check_text = "检查：\n  无。"
 
     # 4. 表尾单元格遍历更新
     for r in range(1, tmpl_sheet.max_row + 1):
@@ -213,33 +223,18 @@ def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_huanfu, to_power
                     cell.value = turbine_str
                     continue
 
-                new_val = val
-                changed = False
-
-                if "1.检查：" in new_val:
-                    new_val = re.sub(r'1\.检查：[\s\S]*?(?=2\.垃圾转运站)', check_text + "\n", new_val)
-                    changed = True
-
-                if "污水" in new_val or "转运" in new_val or "运输总量" in new_val:
-                    if date_str:
-                        new_val = re.sub(r'[0O零]+月[0O零]+日', date_str, new_val)
-
-                    rules = [
-                        (r'(运输总量为)[0\.]+(吨)', f'\\g<1>{tot_sewage}\\2'),
-                        (r'(环服公司处置)[0\.]+(吨)', f'\\g<1>{to_huanfu}\\2'),
-                        (r'(各资源热力电厂处置)[0\.]+(吨)', f'\\g<1>{to_power}\\2'),
-                        (r'(环境集团承运)[0\.]+(吨)', f'\\g<1>{by_huantou}\\2'),
-                        (r'(社会单位承运)[0\.]+(吨)', f'\\g<1>{by_social}\\2'),
-                    ]
-                    for pattern, repl in rules:
-                        new_val = re.sub(pattern, repl, new_val)
-                    changed = True
-
-                if changed:
-                    cell.value = new_val
+                if "检查：" in val:
+                    cell.value = check_text
 
 
 def main():
+    try:
+        fly_ash = float(fly_ash_amount)
+    except (NameError, TypeError, ValueError):
+        raise ValueError("请填写有效的飞灰外运资源化量（吨）") from None
+    if not math.isfinite(fly_ash) or fly_ash < 0:
+        raise ValueError("飞灰外运资源化量必须为大于等于 0 的有效数字")
+
     try:
         # 反序列化 checks 数组
         checks = json.loads(checks_json)
@@ -292,7 +287,7 @@ def main():
 
     r_zc = get_row_by_keywords(tmpl_sheet, ["增城建废", "增城"], 50)
     r_by = get_row_by_keywords(tmpl_sheet, ["白云建废", "白云"], r_zc + 10)
-    r_sewage = get_row_by_keywords(tmpl_sheet, ["检查专项", "垃圾转运站污水", "污水转运"], r_by + 10)
+    r_sewage = get_row_by_keywords(tmpl_sheet, ["生活垃圾污水"], r_by + 10)
 
     inject_manual_data(tmpl_sheet, ["装修垃圾"], z_zx, r_zc, r_by)
     inject_manual_data(tmpl_sheet, ["砖渣"], z_zz, r_zc, r_by)
@@ -305,13 +300,15 @@ def main():
     inject_manual_data(tmpl_sheet, ["再生骨料1-2石", "再生1-2石", "再生骨料"], by_zaisheng12, r_by, r_sewage)
     inject_manual_data(tmpl_sheet, ["再生水稳"], by_zaishengshuiwen, r_by, r_sewage)
 
-    fix_bottom_paragraphs(raw_sheet, tmpl_sheet, tot_sewage, to_huanfu, to_power, by_huantou, by_social, checks)
+    fill_report_table_data(tmpl_sheet, fly_ash, to_huanfu, to_power, by_huantou, by_social)
+    fix_bottom_paragraphs(raw_sheet, tmpl_sheet, checks)
 
     # 保存
     tmpl_wb.save("output_file.xlsx")
 
     # 封包预览数据返回
     parsed_preview = {
+        "fly_ash": fly_ash,
         "sewage": {
             "total": tot_sewage,
             "to_huanfu": to_huanfu,

@@ -20,6 +20,10 @@
 }
 
 /* 基础重置 */
+html {
+    overflow-x: hidden;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -79,6 +83,7 @@ body {
 /* 容器布局 */
 .container {
     width: 100%;
+    min-width: 0;
     max-width: 1400px;
     margin: 0 auto;
     display: flex;
@@ -186,19 +191,20 @@ body {
 /* 主网格排版 */
 .main-grid {
     display: grid;
-    grid-template-columns: 1.3fr 1fr;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
     gap: 1.5rem;
     align-items: start;
 }
 
 @media (max-width: 1024px) {
     .main-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
     }
 }
 
 /* 毛玻璃面板通用设计 */
 .glass-panel {
+    min-width: 0;
     background: var(--card-bg);
     border: 1px solid var(--card-border);
     border-radius: 20px;
@@ -384,7 +390,8 @@ body {
     gap: 0.4rem;
 }
 
-.textarea-wrapper textarea {
+.textarea-wrapper textarea,
+.textarea-wrapper input[type="number"] {
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -399,7 +406,24 @@ body {
     outline: none;
 }
 
-.textarea-wrapper textarea:focus {
+.textarea-wrapper input[type="number"] {
+    min-height: 48px;
+    width: 100%;
+}
+
+.input-hint {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.textarea-wrapper input[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.textarea-wrapper textarea:focus,
+.textarea-wrapper input[type="number"]:focus {
     border-color: var(--secondary);
     background: rgba(0, 240, 255, 0.01);
     box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);

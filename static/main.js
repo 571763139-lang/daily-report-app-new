@@ -1,11 +1,11 @@
 // ================= 配置模板数据源地址 =================
 // 1. (推荐) 如果您希望将模板嵌入在 Supabase：
-//    请在 Supabase 创建公共 Bucket（如 templates），并上传 "新模板.xlsx"
+//    请在 Supabase 创建公共 Bucket（如 templates），并上传 "新模板_v4.xlsx"
 //    将下方地址修改为您的 Supabase 该文件公共访问 URL：
-//    const TEMPLATE_URL = "https://your-project-id.supabase.co/storage/v1/object/public/templates/新模板.xlsx";
+//    const TEMPLATE_URL = "https://your-project-id.supabase.co/storage/v1/object/public/templates/新模板_v4.xlsx?v=4.0";
 // 2. 如果您希望将模板和网页源码一同打包在 GitHub 仓库中：
-//    请将下方地址修改为相对路径 './新模板.xlsx' 即可：
-const TEMPLATE_URL = "./新模板.xlsx";
+//    请将下方地址修改为相对路径 './新模板_v4.xlsx?v=4.0' 即可：
+const TEMPLATE_URL = "./新模板_v4.xlsx?v=4.0";
 // ======================================================
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const form = document.getElementById('report-form');
     const misInput = document.getElementById('mis_file');
     const weighingInput = document.getElementById('weighing_file');
+    const flyAshInput = document.getElementById('fly_ash_amount');
     const misZone = document.getElementById('mis-upload-zone');
     const weighingZone = document.getElementById('weighing-upload-zone');
     const misFileName = document.getElementById('mis-file-name');
@@ -31,6 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const zcPreviewList = document.getElementById('zc-preview-list');
     const byPreviewList = document.getElementById('by-preview-list');
     const sewagePreviewList = document.getElementById('sewage-preview-list');
+    const flyAshPreviewList = document.getElementById('fly-ash-preview-list');
     const downloadLink = document.getElementById('download-link');
     
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -41,8 +43,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const envText = document.getElementById('env-text');
     const envIcon = document.getElementById('env-icon');
 
-    // 特殊字符序号列表 (① ~ ⑥)
-    const numSymbols = ["①", "②", "③", "④", "⑤", "⑥"];
+    // 检查项使用阿拉伯数字编号 (1 ~ 6)
+    const numSymbols = ["1", "2", "3", "4", "5", "6"];
     let checkItemsCount = 0;
 
     // 核心的 WebAssembly Python 逻辑代码及 Pyodide 实例
@@ -56,12 +58,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function initWasmEnvironment() {
         try {
             // 步骤 A: 拉取模板数据与逻辑代码
-            updateProgress(15, "正在连接数据源拉取新模板.xlsx...");
+            updateProgress(15, "正在加载新版日报模板...");
             const templateResp = await fetch(TEMPLATE_URL);
             if (!templateResp.ok) throw new Error("无法从指定的 URL 拉取新模板，请核对 TEMPLATE_URL 配置！");
             const templateBuffer = await templateResp.arrayBuffer();
 
-            const logicResp = await fetch('static/core_logic.py');
+            const logicResp = await fetch('static/core_logic.py?v=4.0');
             if (!logicResp.ok) throw new Error("无法读取本地核心 Python 处理逻辑脚本！");
             pythonCoreCode = await logicResp.text();
 
@@ -81,7 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 步骤 D: 挂载模板文件
             updateProgress(90, "正在同步文件和模板 (3/3)...");
-            pyodideInstance.FS.writeFile("新模板.xlsx", new Uint8Array(templateBuffer));
+            pyodideInstance.FS.writeFile("新模板_v4.xlsx", new Uint8Array(templateBuffer));
 
             // 初始化成功，解锁表单
             updateProgress(100, "环境装载成功！系统已就绪，正在本地极速运行中。");
@@ -108,6 +110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 解锁所有被 disabled 的输入控件
         misInput.disabled = false;
         weighingInput.disabled = false;
+        flyAshInput.disabled = false;
         document.getElementById('zengcheng_text').disabled = false;
         document.getElementById('baiyun_text').disabled = false;
         addCheckBtn.disabled = false;
@@ -243,6 +246,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        const flyAshAmount = Number(flyAshInput.value);
+        if (flyAshInput.value.trim() === '' || !Number.isFinite(flyAshAmount) || flyAshAmount < 0) {
+            showToast("⚠️ 飞灰外运资源化量请输入大于等于 0 的有效数字！");
+            flyAshInput.focus();
+            return;
+        }
+
         // 展现加载动画
         loadingOverlay.classList.add('active');
 
@@ -258,6 +268,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 将文本输入变量注入 Python 全局作用域
             pyodideInstance.globals.set("baiyun_text", document.getElementById('baiyun_text').value);
             pyodideInstance.globals.set("zengcheng_text", document.getElementById('zengcheng_text').value);
+            pyodideInstance.globals.set("fly_ash_amount", flyAshAmount);
 
 
             // 收集检查项数据
@@ -313,6 +324,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         vIcon.className = 'fa-solid fa-circle-check';
         vStatusTitle.textContent = '计算完成';
         vStatusDesc.textContent = '污水运输数据已根据称重数据自动计算完成';
+
+        flyAshPreviewList.innerHTML = `
+            <li><span class="label">飞灰外运资源化</span><span class="value">${data.parsed_data.fly_ash} 吨</span></li>
+        `;
 
         // 2) 增城建废提取结果
         const zc = data.parsed_data.zengcheng;
