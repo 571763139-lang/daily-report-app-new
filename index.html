@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
     <!-- FontAwesome 图标 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="static/style.css">
+    <link rel="stylesheet" href="static/style.css?v=4.0">
     <!-- 引入 Pyodide 浏览器运行库 (使用 Fastly 加速 CDN，解决南大镜像防盗链重定向问题，国内秒加载) -->
     <script src="https://fastly.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
 </head>
@@ -107,10 +107,20 @@
                         </div>
                     </div>
 
-                    <!-- 3. 检查填报项 -->
+                    <!-- 3. 飞灰量手动填报 -->
+                    <div class="section-block">
+                        <h3 class="section-title"><span class="num">3</span>飞灰量手动填报</h3>
+                        <div class="textarea-wrapper">
+                            <label for="fly_ash_amount"><i class="fa-solid fa-truck"></i> 1.5-飞灰外运资源化（吨）</label>
+                            <input type="number" id="fly_ash_amount" name="fly_ash_amount" min="0" step="any" inputmode="decimal" value="0" required disabled aria-describedby="fly-ash-hint">
+                            <small id="fly-ash-hint" class="input-hint">填报市内焚烧厂当日飞灰外运资源化量，无外运时填 0。</small>
+                        </div>
+                    </div>
+
+                    <!-- 4. 检查填报项 -->
                     <div class="section-block">
                         <div class="section-header-row">
-                            <h3 class="section-title"><span class="num">3</span>日常/专项检查填报</h3>
+                            <h3 class="section-title"><span class="num">4</span>日常/专项检查填报</h3>
                             <button type="button" id="add-check-btn" class="btn-secondary" disabled><i class="fa-solid fa-plus"></i> 添加检查项</button>
                         </div>
                         <div id="check-list-container" class="check-list">
@@ -155,6 +165,10 @@
 
                     <!-- 提取数据概览 -->
                     <div class="preview-sections">
+                        <div class="preview-card">
+                            <h4 class="card-subtitle"><i class="fa-solid fa-truck"></i> 飞灰外运资源化（手动填报）</h4>
+                            <ul class="data-list" id="fly-ash-preview-list"></ul>
+                        </div>
                         
                         <!-- 增城建废数据提取结果 -->
                         <div class="preview-card">
@@ -174,7 +188,7 @@
 
                         <!-- 污水运输计算结果 -->
                         <div class="preview-card">
-                            <h4 class="card-subtitle"><i class="fa-solid fa-droplet icon-color-3"></i> 污水运输数据 (称重计算)</h4>
+                            <h4 class="card-subtitle"><i class="fa-solid fa-droplet icon-color-3"></i> 污水运输数据（自动填入底部表格）</h4>
                             <ul class="data-list" id="sewage-preview-list">
                                 <!-- 动态注入 -->
                             </ul>
@@ -208,6 +222,6 @@
     <!-- 提示框 -->
     <div id="toast" class="toast"></div>
 
-    <script src="static/main.js?v=3.0"></script>
+    <script src="static/main.js?v=4.0"></script>
 </body>
 </html>
