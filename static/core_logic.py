@@ -11,7 +11,7 @@ import openpyxl
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 # 虚拟文件系统中的路径
-TEMPLATE_FILE = "新模板_v4.xlsx"
+TEMPLATE_FILE = "新模板.xlsx"
 MIS_FILE = "mis_file.xlsx"
 WEIGHING_FILE = "weighing_file.xlsx"
 

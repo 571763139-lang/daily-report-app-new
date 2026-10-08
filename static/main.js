@@ -1,11 +1,11 @@
 // ================= 配置模板数据源地址 =================
 // 1. (推荐) 如果您希望将模板嵌入在 Supabase：
-//    请在 Supabase 创建公共 Bucket（如 templates），并上传 "新模板_v4.xlsx"
+//    请在 Supabase 创建公共 Bucket（如 templates），并上传 "新模板.xlsx"
 //    将下方地址修改为您的 Supabase 该文件公共访问 URL：
-//    const TEMPLATE_URL = "https://your-project-id.supabase.co/storage/v1/object/public/templates/新模板_v4.xlsx?v=4.0";
+//    const TEMPLATE_URL = "https://your-project-id.supabase.co/storage/v1/object/public/templates/新模板.xlsx?v=4.1";
 // 2. 如果您希望将模板和网页源码一同打包在 GitHub 仓库中：
-//    请将下方地址修改为相对路径 './新模板_v4.xlsx?v=4.0' 即可：
-const TEMPLATE_URL = "./新模板_v4.xlsx?v=4.0";
+//    请将下方地址修改为相对路径 './新模板.xlsx?v=4.1' 即可：
+const TEMPLATE_URL = "./新模板.xlsx?v=4.1";
 // ======================================================
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!templateResp.ok) throw new Error("无法从指定的 URL 拉取新模板，请核对 TEMPLATE_URL 配置！");
             const templateBuffer = await templateResp.arrayBuffer();
 
-            const logicResp = await fetch('static/core_logic.py?v=4.0');
+            const logicResp = await fetch('static/core_logic.py?v=4.1');
             if (!logicResp.ok) throw new Error("无法读取本地核心 Python 处理逻辑脚本！");
             pythonCoreCode = await logicResp.text();
 
@@ -83,7 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 步骤 D: 挂载模板文件
             updateProgress(90, "正在同步文件和模板 (3/3)...");
-            pyodideInstance.FS.writeFile("新模板_v4.xlsx", new Uint8Array(templateBuffer));
+            pyodideInstance.FS.writeFile("新模板.xlsx", new Uint8Array(templateBuffer));
 
             // 初始化成功，解锁表单
             updateProgress(100, "环境装载成功！系统已就绪，正在本地极速运行中。");
