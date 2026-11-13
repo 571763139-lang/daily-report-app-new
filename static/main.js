@@ -1,365 +1,195 @@
-// ================= 配置模板数据源地址 =================
-// 1. (推荐) 如果您希望将模板嵌入在 Supabase：
-//    请在 Supabase 创建公共 Bucket（如 templates），并上传 "新模板.xlsx"
-//    将下方地址修改为您的 Supabase 该文件公共访问 URL：
-//    const TEMPLATE_URL = "https://your-project-id.supabase.co/storage/v1/object/public/templates/新模板.xlsx?v=4.1";
-// 2. 如果您希望将模板和网页源码一同打包在 GitHub 仓库中：
-//    请将下方地址修改为相对路径 './新模板.xlsx?v=4.1' 即可：
-const TEMPLATE_URL = "./新模板.xlsx?v=4.1";
-// ======================================================
-
-document.addEventListener('DOMContentLoaded', async () => {
-    // 1. 获取 DOM 节点
-    const form = document.getElementById('report-form');
-    const misInput = document.getElementById('mis_file');
-    const weighingInput = document.getElementById('weighing_file');
-    const flyAshInput = document.getElementById('fly_ash_amount');
-    const misZone = document.getElementById('mis-upload-zone');
-    const weighingZone = document.getElementById('weighing-upload-zone');
-    const misFileName = document.getElementById('mis-file-name');
-    const weighingFileName = document.getElementById('weighing-file-name');
-    
-    const addCheckBtn = document.getElementById('add-check-btn');
-    const checkListContainer = document.getElementById('check-list-container');
-    
-    const resultPlaceholder = document.getElementById('result-placeholder');
-    const resultContent = document.getElementById('result-content');
-    const verificationCard = document.getElementById('verification-card');
-    const vIcon = document.getElementById('v-icon');
-    const vStatusTitle = document.getElementById('v-status-title');
-    const vStatusDesc = document.getElementById('v-status-desc');
-    
-    const zcPreviewList = document.getElementById('zc-preview-list');
-    const byPreviewList = document.getElementById('by-preview-list');
-    const sewagePreviewList = document.getElementById('sewage-preview-list');
-    const flyAshPreviewList = document.getElementById('fly-ash-preview-list');
-    const downloadLink = document.getElementById('download-link');
-    
-    const loadingOverlay = document.getElementById('loading-overlay');
-    const toast = document.getElementById('toast');
-
-    // 进度条及初始化指示器 DOM
-    const envProgress = document.getElementById('env-progress');
-    const envText = document.getElementById('env-text');
-    const envIcon = document.getElementById('env-icon');
-
-    // 检查项使用阿拉伯数字编号 (1 ~ 6)
-    const numSymbols = ["1", "2", "3", "4", "5", "6"];
-    let checkItemsCount = 0;
-
-    // 核心的 WebAssembly Python 逻辑代码及 Pyodide 实例
-    let pyodideInstance = null;
-    let pythonCoreCode = "";
-
-    // 网页启动时开始异步加载环境
-    initWasmEnvironment();
-
-    // 2. 初始化 Pyodide 环境及抓取数据源
-    async function initWasmEnvironment() {
-        try {
-            // 步骤 A: 拉取模板数据与逻辑代码
-            updateProgress(15, "正在加载新版日报模板...");
-            const templateResp = await fetch(TEMPLATE_URL);
-            if (!templateResp.ok) throw new Error("无法从指定的 URL 拉取新模板，请核对 TEMPLATE_URL 配置！");
-            const templateBuffer = await templateResp.arrayBuffer();
-
-            const logicResp = await fetch('static/core_logic.py?v=4.1');
-            if (!logicResp.ok) throw new Error("无法读取本地核心 Python 处理逻辑脚本！");
-            pythonCoreCode = await logicResp.text();
-
-            // 步骤 B: 启动 Pyodide Wasm (使用 Fastly 官方加速 CDN，国内秒加载且无重定向限制)
-            updateProgress(35, "正在启动浏览器 Python 虚拟环境 (1/3)...");
-            pyodideInstance = await loadPyodide({
-                indexURL: "https://fastly.jsdelivr.net/pyodide/v0.23.4/full/"
-            });
-
-            // 步骤 C: 安装依赖包 (openpyxl 为纯 Python 包，需通过 micropip 运行时动态装载)
-            updateProgress(65, "正在装载 Pandas 和 Micropip 依赖库 (2/3)...");
-            await pyodideInstance.loadPackage(["pandas", "micropip"]);
-            
-            updateProgress(80, "正在通过 Micropip 动态安装 OpenPyXL 包...");
-            const micropip = pyodideInstance.pyimport("micropip");
-            await micropip.install("openpyxl");
-
-            // 步骤 D: 挂载模板文件
-            updateProgress(90, "正在同步文件和模板 (3/3)...");
-            pyodideInstance.FS.writeFile("新模板.xlsx", new Uint8Array(templateBuffer));
-
-            // 初始化成功，解锁表单
-            updateProgress(100, "环境装载成功！系统已就绪，正在本地极速运行中。");
-            envIcon.className = "fa-solid fa-circle-check text-success";
-            unlockForm();
-
-            // 初始化添加第一条检查项
-            createCheckItem("无");
-
-        } catch (error) {
-            console.error(error);
-            envIcon.className = "fa-solid fa-circle-xmark text-danger";
-            envText.innerHTML = `<span class="text-danger">环境装载失败: ${error.message}</span>`;
-            showToast("❌ 初始化环境失败，请核对您的网络或数据源链接！");
-        }
+'use strict';
+document.addEventListener('DOMContentLoaded', () => {
+    const $ = id => document.getElementById(id);
+    const form = $('report-form'), submit = $('submit-btn');
+    let worker = null, ready = false, busy = false, requestId = 0, blobUrl = null;
+    let currentRun = null, toastTimer = null;
+    const pending = new Map();
+    function toast(message) {
+        clearTimeout(toastTimer); $('toast').textContent = message; $('toast').classList.add('show');
+        toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4000);
     }
-
-    function updateProgress(percentage, text) {
-        envProgress.style.width = `${percentage}%`;
-        envText.textContent = text;
+    function errorText(error) {
+        const lines = String(error.message || error).trim().split('\n').filter(Boolean);
+        return lines[lines.length - 1].replace(/^(?:ValueError|Error):\s*/, '');
     }
-
-    function unlockForm() {
-        // 解锁所有被 disabled 的输入控件
-        misInput.disabled = false;
-        weighingInput.disabled = false;
-        flyAshInput.disabled = false;
-        document.getElementById('zengcheng_text').disabled = false;
-        document.getElementById('baiyun_text').disabled = false;
-        addCheckBtn.disabled = false;
-        document.getElementById('submit-btn').disabled = false;
-
-        misFileName.textContent = "点击或拖拽上传 (.xlsx)";
-        weighingFileName.textContent = "点击或拖拽上传 (.xlsx)";
+    function showError(error) { $('error-message').textContent = errorText(error); $('error-panel').hidden = false; }
+    function controls() {
+        for (const element of form.querySelectorAll('input,textarea,button')) element.disabled = !ready || busy;
+        submit.setAttribute('aria-busy', String(busy)); $('task-status').hidden = !busy;
     }
-
-    // 3. 文件上传拖拽/点击交互
-    setupFileZone(misZone, misInput, misFileName);
-    setupFileZone(weighingZone, weighingInput, weighingFileName);
-
-    function setupFileZone(zone, input, nameElement) {
-        zone.addEventListener('click', () => {
-            if (!input.disabled) input.click();
+    function clearResult() {
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        blobUrl = null; $('download-link').removeAttribute('href');
+        $('result-content').style.display = 'none'; $('result-placeholder').style.display = 'flex';
+    }
+    function stopWorker(reason = new Error('计算已取消')) {
+        if (worker) worker.terminate(); worker = null; ready = false;
+        for (const {reject,timer} of pending.values()) { clearTimeout(timer); reject(reason); }
+        pending.clear(); controls();
+    }
+    function request(type, payload = {}, transfer = []) {
+        return new Promise((resolve,reject) => {
+            if (!worker) { reject(new Error('请先重新初始化计算环境')); return; }
+            const id = ++requestId;
+            const timer = setTimeout(() => {
+                const error = new Error(type === 'init' ? '环境加载超时，请检查网络后点击重新初始化；手工制表规则仍可打开。' : '生成超过120秒，请核对文件大小或重新导出Excel后重试。');
+                stopWorker(error); $('retry-env-btn').hidden = false;
+            }, type === 'init' ? 180000 : 120000);
+            pending.set(id,{resolve,reject,timer});
+            try { worker.postMessage({id,type,...payload},transfer); }
+            catch (error) { clearTimeout(timer); pending.delete(id); reject(error); }
         });
-
+    }
+    async function init() {
+        $('retry-env-btn').hidden = true; $('error-panel').hidden = true; stopWorker();
+        $('env-icon').className = 'fa-solid fa-circle-notch fa-spin text-secondary';
+        $('env-text').textContent = '正在后台加载计算环境，期间可阅读手工制表规则…'; $('env-progress').style.width = '5%';
+        try {
+            if (location.protocol === 'file:') throw new Error('请使用“一键本地启动.bat”打开此版本，不要直接双击index.html。');
+            worker = new Worker('static/report-worker.js?v=5.0.0');
+            worker.onmessage = ({data}) => {
+                if (data.type === 'progress') {
+                    $('env-text').textContent = data.text; $('env-progress').style.width = `${data.percent}%`;
+                    if (busy) $('task-message').textContent = data.text;
+                    return;
+                }
+                const task = pending.get(data.id); if (!task) return;
+                clearTimeout(task.timer); pending.delete(data.id);
+                if (data.ok) task.resolve(data); else task.reject(new Error(data.error));
+            };
+            worker.onerror = event => {
+                event.preventDefault();
+                const error = new Error('后台计算环境异常，请点击重新初始化；页面仍可滚动，已填内容保留。');
+                stopWorker(error); showError(error); $('retry-env-btn').hidden = false;
+            };
+            await request('init'); ready = true; $('env-icon').className = 'fa-solid fa-circle-check text-success';
+            for (const name of ['mis','weighing']) if (!$(`${name}_file`).files.length) $(`${name}-file-name`).textContent = '选择本机Excel（.xlsx）';
+        } catch (error) {
+            stopWorker(error); $('env-icon').className = 'fa-solid fa-circle-xmark text-danger';
+            $('env-text').textContent = errorText(error); $('retry-env-btn').hidden = false; showError(error);
+        } finally { controls(); }
+    }
+    $('retry-env-btn').addEventListener('click',init);
+    // 原生文件输入覆盖卡片，不从父节点递归触发 input.click()。
+    for (const name of ['mis','weighing']) {
+        const input = $(`${name}_file`), zone = $(`${name}-upload-zone`), label = $(`${name}-file-name`);
         input.addEventListener('change', () => {
-            if (input.files.length > 0) {
-                nameElement.textContent = input.files[0].name;
-                zone.classList.add('active');
-            } else {
-                nameElement.textContent = "点击或拖拽上传 (.xlsx)";
-                zone.classList.remove('active');
-            }
+            label.textContent = input.files[0]?.name || '选择本机Excel（.xlsx）';
+            zone.classList.toggle('active',!!input.files.length); clearResult();
         });
-
-        ['dragenter', 'dragover'].forEach(eventName => {
-            zone.addEventListener(eventName, (e) => {
-                e.preventDefault();
-                if (input.disabled) return;
-                zone.style.borderColor = 'var(--secondary)';
-                zone.style.background = 'rgba(0, 240, 255, 0.04)';
-            }, false);
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            zone.addEventListener(eventName, (e) => {
-                e.preventDefault();
-                zone.style.borderColor = '';
-                zone.style.background = '';
-            }, false);
-        });
-
-        zone.addEventListener('drop', (e) => {
-            if (input.disabled) return;
-            const dt = e.dataTransfer;
-            const files = dt.files;
-            if (files.length > 0) {
-                input.files = files;
-                nameElement.textContent = files[0].name;
-                zone.classList.add('active');
-            }
+        zone.addEventListener('dragover',event => event.preventDefault());
+        zone.addEventListener('drop',event => {
+            event.preventDefault(); if (input.disabled) return;
+            if (event.dataTransfer.files.length !== 1) { showError(new Error('每个数据源只接受一个.xlsx文件')); return; }
+            try { input.files = event.dataTransfer.files; input.dispatchEvent(new Event('change',{bubbles:true})); }
+            catch (_) { showError(new Error('浏览器不支持拖入文件，请点击选择文件')); }
         });
     }
-
-    // 4. 动态检查项列表管理
-    addCheckBtn.addEventListener('click', () => {
-        if (addCheckBtn.disabled) return;
-        if (checkItemsCount >= 6) {
-            showToast("检查内容最多只能添加 6 条！");
-            return;
-        }
-        createCheckItem("");
-    });
-
-    function createCheckItem(initialValue = "") {
-        checkItemsCount++;
-        
-        const checkItemDiv = document.createElement('div');
-        checkItemDiv.className = 'check-item';
-        
-        const numLabel = document.createElement('span');
-        numLabel.className = 'check-item-num';
-        numLabel.textContent = numSymbols[checkItemsCount - 1];
-        
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.name = 'check-content';
-        input.placeholder = `请输入检查项 ${checkItemsCount} 内容...`;
-        input.value = initialValue;
-        
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'btn-remove-check';
-        removeBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
-        
-        removeBtn.addEventListener('click', () => {
-            checkItemDiv.remove();
-            checkItemsCount--;
-            rebuildCheckNums();
-        });
-
-        checkItemDiv.appendChild(numLabel);
-        checkItemDiv.appendChild(input);
-        checkItemDiv.appendChild(removeBtn);
-        
-        checkListContainer.appendChild(checkItemDiv);
-    }
-
-    function rebuildCheckNums() {
-        const items = checkListContainer.querySelectorAll('.check-item');
-        items.forEach((item, index) => {
-            const numLabel = item.querySelector('.check-item-num');
-            numLabel.textContent = numSymbols[index];
-            const input = item.querySelector('input');
-            input.placeholder = `请输入检查项 ${index + 1} 内容...`;
+    function renumber() {
+        $('check-list-container').querySelectorAll('.check-item').forEach((item,index) => {
+            item.querySelector('.check-item-num').textContent = index + 1;
+            const input = item.querySelector('input'); input.placeholder = `请输入检查项 ${index + 1} 内容…`;
+            input.setAttribute('aria-label',`检查项 ${index + 1}`); item.querySelector('button').setAttribute('aria-label',`删除检查项 ${index + 1}`);
         });
     }
-
-    // 5. Toast 消息提示
-    function showToast(message, duration = 3500) {
-        toast.textContent = message;
-        toast.classList.add('show');
-        setTimeout(() => {
-            toast.classList.remove('show');
-        }, duration);
+    function addCheck(value = '') {
+        if ($('check-list-container').children.length >= 6) { toast('检查内容最多6条'); return; }
+        const item = document.createElement('div'); item.className = 'check-item';
+        const number = document.createElement('span'); number.className = 'check-item-num';
+        const input = document.createElement('input'); input.type = 'text'; input.name = 'check-content'; input.value = value;
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn-remove-check'; remove.textContent = '删除';
+        remove.addEventListener('click',() => { item.remove(); renumber(); clearResult(); });
+        item.append(number,input,remove); $('check-list-container').append(item); renumber();
     }
-
-    // 6. 表单提交：通过 WebAssembly 执行 Python 逻辑并直接输出结果
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        if (!pyodideInstance) {
-            showToast("⚠️ Python 运行环境尚未准备就绪，请稍候！");
-            return;
-        }
-
-        // 文件非空验证
-        if (!misInput.files.length || !weighingInput.files.length) {
-            showToast("⚠️ 请确保上传了 MIS数据 和 称重数据！");
-            return;
-        }
-
-        const flyAshAmount = Number(flyAshInput.value);
-        if (flyAshInput.value.trim() === '' || !Number.isFinite(flyAshAmount) || flyAshAmount < 0) {
-            showToast("⚠️ 飞灰外运资源化量请输入大于等于 0 的有效数字！");
-            flyAshInput.focus();
-            return;
-        }
-
-        // 展现加载动画
-        loadingOverlay.classList.add('active');
-
+    addCheck('无'); controls();
+    $('add-check-btn').addEventListener('click',() => { addCheck(); controls(); }); form.addEventListener('input',clearResult);
+    function readFile(file, signal) {
+        return new Promise((resolve,reject) => {
+            const reader = new FileReader(); let timer;
+            const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort',abort); };
+            const abort = () => { reader.abort(); cleanup(); reject(new DOMException('已取消','AbortError')); };
+            reader.onload = () => { cleanup(); resolve(reader.result); };
+            reader.onerror = () => { cleanup(); reject(new Error(`无法读取“${file.name}”，请先将iCloud/网盘文件下载到本机再选择。`)); };
+            timer = setTimeout(() => { cleanup(); reader.onload=null; reader.onerror=null; reader.abort(); reject(new Error(`读取“${file.name}”超时，请先下载到本机。`)); },30000);
+            signal.addEventListener('abort',abort,{once:true}); if (signal.aborted) { abort(); return; }
+            reader.readAsArrayBuffer(file);
+        });
+    }
+    function validateFile(file, label) {
+        if (!file || !/\.xlsx$/i.test(file.name)) throw new Error(`${label}请选择.xlsx文件，不支持.xls或直接改后缀的文件`);
+        if (!file.size) throw new Error(`${label}是空文件，请重新下载`);
+        if (file.size > 20*1024*1024) throw new Error(`${label}超过20MB，请精简无用行列后重新导出`);
+    }
+    function render(data, excel) {
+        blobUrl = URL.createObjectURL(new Blob([excel],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+        $('download-link').href = blobUrl; $('download-link').download = data.filename;
+        $('result-placeholder').style.display = 'none'; $('result-content').style.display = 'flex';
+        const warnings = data.warnings || [];
+        $('verification-card').className = `verification-card ${warnings.length ? 'warning' : 'success'}`;
+        $('v-icon').className = `fa-solid ${warnings.length ? 'fa-triangle-exclamation' : 'fa-circle-check'}`;
+        $('v-status-title').textContent = warnings.length ? '已生成，有待核对项' : '计算完成';
+        $('v-status-desc').textContent = warnings.length ? '请逐条核对下方提示，再使用日报。' : '污水数据已计算并写入表格，请与来源核对。';
+        $('result-warnings').replaceChildren(...warnings.map(message => { const li=document.createElement('li'); li.textContent=message; return li; }));
+        $('result-warnings').hidden = !warnings.length;
+        const fill = (id,rows) => $(id).replaceChildren(...rows.map(([label,value,unit]) => {
+            const li=document.createElement('li'), l=document.createElement('span'), v=document.createElement('span');
+            l.className='label'; l.textContent=label; v.className='value'; v.textContent=`${value} ${unit || '吨'}`;
+            li.append(l,v); return li;
+        }));
+        const p=data.parsed_data, z=p.zengcheng, b=p.baiyun, s=p.sewage;
+        fill('fly-ash-preview-list',[['飞灰外运资源化',p.fly_ash]]);
+        fill('zc-preview-list',Object.entries(z).map(([key,value])=>[key,value]));
+        fill('by-preview-list',[['进厂总量（石渣+水泥头+原生石）',b.total.toFixed(2)],['原生混凝土',b.hunningtu,'立方米'],['再生1-2石',b.zaisheng12],['再生水稳',b.zaishengshuiwen]]);
+        fill('sewage-preview-list',[['生活垃圾污水运输总量',s.total.toFixed(2)],['环境集团运输',s.by_huantou.toFixed(2)],['社会单位运输',s.by_social.toFixed(2)],['环服公司处置',s.to_huanfu.toFixed(2)],['各资源热力电厂处置',s.to_power.toFixed(2)]]);
+    }
+    form.addEventListener('submit',async event => {
+        event.preventDefault(); if (busy || !ready || !form.reportValidity()) return;
+        clearResult(); $('error-panel').hidden = true;
+        const controller = new AbortController(); currentRun = controller;
         try {
-            // 读取用户上传的 Excel 文件为 ArrayBuffer
-            const misBuffer = await misInput.files[0].arrayBuffer();
-            const weighingBuffer = await weighingInput.files[0].arrayBuffer();
-
-            // 写入 Pyodide 虚拟文件系统
-            pyodideInstance.FS.writeFile("mis_file.xlsx", new Uint8Array(misBuffer));
-            pyodideInstance.FS.writeFile("weighing_file.xlsx", new Uint8Array(weighingBuffer));
-
-            // 将文本输入变量注入 Python 全局作用域
-            pyodideInstance.globals.set("baiyun_text", document.getElementById('baiyun_text').value);
-            pyodideInstance.globals.set("zengcheng_text", document.getElementById('zengcheng_text').value);
-            pyodideInstance.globals.set("fly_ash_amount", flyAshAmount);
-
-
-            // 收集检查项数据
-            const checkInputs = checkListContainer.querySelectorAll('input[name="check-content"]');
-            const checksArray = [];
-            checkInputs.forEach(input => {
-                const val = input.value.trim();
-                if (val && val !== '') checksArray.push(val);
-            });
-            pyodideInstance.globals.set("checks_json", JSON.stringify(checksArray));
-
-            // 异步执行 Python 脚本
-            await pyodideInstance.runPythonAsync(pythonCoreCode);
-
-            // 从 Python 作用域获取返回的 JSON 字符串结果
-            const outputJsonStr = pyodideInstance.globals.get("output_json_str");
-            const result = JSON.parse(outputJsonStr);
-
-            if (result.success) {
-                // 从虚拟文件系统中读取生成好的 excel 二进制文件
-                const outputExcelBytes = pyodideInstance.FS.readFile("output_file.xlsx");
-                
-                // 将二进制转换为本地下载 Blob 流
-                const blob = new Blob([outputExcelBytes], { 
-                    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" 
-                });
-                const blobUrl = URL.createObjectURL(blob);
-
-                // 更新前端界面结果面板
-                renderResult(result, blobUrl);
-                
-                loadingOverlay.classList.remove('active');
-                showToast("🎉 日报表已由本地 Python 成功生成并校验完成！");
-            } else {
-                throw new Error("Python 内部生成失败。");
-            }
-
-        } catch (error) {
-            loadingOverlay.classList.remove('active');
-            showToast(`❌ 数据解析或写入错误: ${error.message}`);
-            console.error(error);
+            const mis=$('mis_file').files[0], weighing=$('weighing_file').files[0];
+            validateFile(mis,'MIS数据'); validateFile(weighing,'称重数据');
+            const flyAsh = Number($('fly_ash_amount').value);
+            if ($('fly_ash_amount').value.trim()==='' || !Number.isFinite(flyAsh) || flyAsh<0) throw new Error('飞灰量请输入大于等于0的有效数字');
+            const inputs = {fly_ash_amount:flyAsh,baiyun_text:$('baiyun_text').value,zengcheng_text:$('zengcheng_text').value,
+                checks_json:JSON.stringify([...form.querySelectorAll('[name="check-content"]')].map(input=>input.value.trim()).filter(Boolean))};
+            busy=true; controls(); $('task-message').textContent='正在读取本机文件，可继续滚动页面或查看规则…';
+            const [misBytes,weighingBytes] = await Promise.all([readFile(mis,controller.signal),readFile(weighing,controller.signal)]);
+            if (controller.signal.aborted) throw new DOMException('已取消','AbortError');
+            const data=await request('generate',{mis:misBytes,weighing:weighingBytes,inputs},[misBytes,weighingBytes]);
+            render(data.result,data.excel); toast('日报已生成，请核对预览后下载。');
+        } catch (error) { controller.abort(); if (error.name !== 'AbortError') showError(error); }
+        finally {
+            busy=false; currentRun=null; controls();
+            if (ready) $('env-text').textContent='计算环境已就绪，可修改数据后重新生成。';
         }
     });
-
-    // 7. 渲染结果仪表盘
-    function renderResult(data, blobUrl) {
-        // 隐藏占位符，显示数据区
-        resultPlaceholder.style.display = 'none';
-        resultContent.style.display = 'flex';
-
-        // 1) 校验预警卡片 —— 始终显示计算完成
-        verificationCard.className = 'verification-card success';
-        vIcon.className = 'fa-solid fa-circle-check';
-        vStatusTitle.textContent = '计算完成';
-        vStatusDesc.textContent = '污水运输数据已根据称重数据自动计算完成';
-
-        flyAshPreviewList.innerHTML = `
-            <li><span class="label">飞灰外运资源化</span><span class="value">${data.parsed_data.fly_ash} 吨</span></li>
-        `;
-
-        // 2) 增城建废提取结果
-        const zc = data.parsed_data.zengcheng;
-        zcPreviewList.innerHTML = `
-            <li><span class="label">装修垃圾进厂量</span><span class="value">${zc['装修垃圾']} 吨</span></li>
-            <li><span class="label">再生水稳量</span><span class="value">${zc['再生水稳']} 吨</span></li>
-            <li><span class="label">再生石粉量</span><span class="value highlight">${zc['再生石粉']} 吨</span></li>
-            <li><span class="label">砖渣出厂量</span><span class="value">${zc['砖渣']} 吨</span></li>
-            <li><span class="label">混凝土块出厂量</span><span class="value">${zc['混凝土块']} 吨</span></li>
-        `;
-
-        // 3) 白云建废提取结果
-        const by = data.parsed_data.baiyun;
-        byPreviewList.innerHTML = `
-            <li><span class="label">进厂总量 (石渣/水泥头/原生石和)</span><span class="value">${by.total.toFixed(2)} 吨</span></li>
-            <li><span class="label">原生混凝土</span><span class="value">${by.hunningtu} 立方米</span></li>
-            <li><span class="label">再生1-2石</span><span class="value">${by.zaisheng12} 吨</span></li>
-            <li><span class="label">再生水稳</span><span class="value">${by.zaishengshuiwen} 吨</span></li>
-        `;
-
-        // 4) 污水运输数据（新版：5项）
-        const sew = data.parsed_data.sewage;
-        sewagePreviewList.innerHTML = `
-            <li><span class="label">广州市生活垃圾污水运输总量</span><span class="value highlight">${sew.total.toFixed(2)} 吨</span></li>
-            <li><span class="label">环服公司处置</span><span class="value">${sew.to_huanfu.toFixed(2)} 吨</span></li>
-            <li><span class="label">各资源热力电厂处置</span><span class="value">${sew.to_power.toFixed(2)} 吨</span></li>
-            <li><span class="label">环境集团承运</span><span class="value">${sew.by_huantou.toFixed(2)} 吨</span></li>
-            <li><span class="label">社会单位承运</span><span class="value">${sew.by_social.toFixed(2)} 吨</span></li>
-        `;
-
-        // 6) 更新本地下载二进制
-        downloadLink.href = blobUrl;
-        downloadLink.download = data.filename;
-    }
+    $('cancel-btn').addEventListener('click',() => {
+        currentRun?.abort(); stopWorker(new DOMException('已取消','AbortError'));
+        $('env-text').textContent='生成已取消，已填内容保留。点击重新初始化后可重试。'; $('retry-env-btn').hidden=false;
+    });
+    // 不改写 body 的 overflow，关闭说明后不会遗留滚动锁。
+    const dialog=$('rules-dialog'); let savedFocus=null, savedScroll=0;
+    $('rules-btn').addEventListener('click',() => {
+        savedFocus=document.activeElement; savedScroll=window.scrollY;
+        if (dialog.showModal) dialog.showModal(); else dialog.setAttribute('open','');
+        $('rules-close').focus({preventScroll:true});
+    });
+    function restoreFocus() { savedFocus?.focus({preventScroll:true}); window.scrollTo(0,savedScroll); }
+    const closeRules = () => { if (dialog.close) dialog.close(); else { dialog.removeAttribute('open'); restoreFocus(); } };
+    dialog.addEventListener('close',restoreFocus);
+    for (const button of dialog.querySelectorAll('[data-close-rules]')) button.addEventListener('click',closeRules);
+    dialog.addEventListener('click',event => { if (event.target===dialog) closeRules(); });
+    dialog.addEventListener('keydown',event => {
+        if (event.key==='Escape') { event.preventDefault(); closeRules(); }
+        if (event.key==='Tab') {
+            const targets=[...dialog.querySelectorAll('button,a[href], [tabindex="0"]')], first=targets[0], last=targets[targets.length-1];
+            if (event.shiftKey && document.activeElement===first) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && document.activeElement===last) { event.preventDefault(); first.focus(); }
+        }
+    });
+    window.addEventListener('pagehide',() => { stopWorker(); if (blobUrl) URL.revokeObjectURL(blobUrl); });
+    window.addEventListener('pageshow',event => { if (event.persisted) { busy=false; clearResult(); init(); } });
+    init();
 });

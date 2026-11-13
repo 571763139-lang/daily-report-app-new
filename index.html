@@ -3,20 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安全生产每日简报智能生成与校验系统 (无服务器版)</title>
+    <title>每日生产日报 · 规则与生成 V5</title>
+    <link rel="icon" href="data:,">
     <!-- Google 字体 -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
     <!-- FontAwesome 图标 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="static/style.css?v=4.0">
-    <!-- 引入 Pyodide 浏览器运行库 (使用 Fastly 加速 CDN，解决南大镜像防盗链重定向问题，国内秒加载) -->
-    <script src="https://fastly.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <link rel="stylesheet" href="static/style.css?v=5.0.0">
 </head>
 <body>
     <!-- 背景流光装饰 -->
-    <div class="bg-glow bg-glow-1"></div>
+    <div class="page-background" aria-hidden="true"><div class="bg-glow bg-glow-1"></div>
     <div class="bg-glow bg-glow-2"></div>
-    <div class="bg-glow bg-glow-3"></div>
+    <div class="bg-glow bg-glow-3"></div></div>
 
     <div class="container">
         <!-- 头部标题 -->
@@ -32,6 +31,11 @@
             </div>
         </header>
 
+        <div class="utility-bar">
+            <span>V5 · 计算与手工制表说明</span>
+            <button type="button" id="rules-btn" class="btn-secondary" aria-haspopup="dialog" aria-controls="rules-dialog">手工制表规则</button>
+        </div>
+
         <!-- 系统环境加载进度指示区 -->
         <div id="env-loader-panel" class="env-loader-panel glass-panel">
             <div class="loader-status">
@@ -41,6 +45,14 @@
             <div class="progress-bar-container">
                 <div id="env-progress" class="progress-bar" style="width: 5%;"></div>
             </div>
+            <button type="button" id="retry-env-btn" class="btn-secondary" hidden>重新初始化</button>
+        </div>
+
+        <div id="error-panel" class="message-panel error-panel" role="alert" hidden>
+            <strong>未能完成生成</strong><p id="error-message"></p><p>已填内容会保留，请核对后重试；也可打开手工制表规则。</p>
+        </div>
+        <div id="task-status" class="message-panel task-status" role="status" hidden>
+            <p id="task-message">正在读取数据…</p><button id="cancel-btn" type="button" class="btn-secondary">取消生成</button>
         </div>
 
         <!-- 主体网格布局 -->
@@ -61,7 +73,7 @@
                         <div class="file-uploads">
                             <!-- MIS数据上传 -->
                             <div class="file-upload-card" id="mis-upload-zone">
-                                <input type="file" id="mis_file" name="mis_file" accept=".xlsx" required hidden disabled>
+                                <input type="file" id="mis_file" name="mis_file" accept=".xlsx" aria-label="选择MIS数据Excel" required disabled>
                                 <div class="card-icon"><i class="fa-solid fa-database"></i></div>
                                 <div class="card-text">
                                     <span class="title">MIS数据</span>
@@ -71,7 +83,7 @@
                             
                             <!-- 称重数据上传 -->
                             <div class="file-upload-card" id="weighing-upload-zone">
-                                <input type="file" id="weighing_file" name="weighing_file" accept=".xlsx" required hidden disabled>
+                                <input type="file" id="weighing_file" name="weighing_file" accept=".xlsx" aria-label="选择称重数据Excel" required disabled>
                                 <div class="card-icon"><i class="fa-solid fa-weight-hanging"></i></div>
                                 <div class="card-text">
                                     <span class="title">称重数据</span>
@@ -164,6 +176,7 @@
                     </div>
 
                     <!-- 提取数据概览 -->
+                    <ul id="result-warnings" class="result-warnings" aria-label="生成后待核对项" hidden></ul>
                     <div class="preview-sections">
                         <div class="preview-card">
                             <h4 class="card-subtitle"><i class="fa-solid fa-truck"></i> 飞灰外运资源化（手动填报）</h4>
@@ -210,18 +223,48 @@
         </main>
     </div>
 
-    <!-- 加载遮罩 -->
-    <div id="loading-overlay" class="loading-overlay">
-        <div class="loader">
-            <div class="spinner"></div>
-            <h3>正在执行浏览器 Python Wasm 计算中...</h3>
-            <p>基于 pandas 和 openpyxl 本地解析及数据校验，请稍候</p>
+    <dialog id="rules-dialog" aria-labelledby="rules-title">
+        <div class="rules-window">
+            <div class="rules-header"><div><p class="rules-kicker">照着做，也能完成日报</p><h2 id="rules-title">手工制表规则</h2></div><button id="rules-close" type="button" class="btn-secondary" data-close-rules aria-label="关闭手工制表规则">关闭</button></div>
+            <div class="rules-body" tabindex="0" aria-label="可滚动的手工制表说明">
+                <p class="rules-lead">先核对生产日期和单位，再分块填写。这里的说明与本版自动生成逻辑对应；计算环境未就绪时也能阅读。</p>
+                <nav class="rules-nav" aria-label="规则目录"><a href="#rule-prepare">准备</a><a href="#rule-mis">MIS数据</a><a href="#rule-zengcheng">增城</a><a href="#rule-baiyun">白云</a><a href="#rule-sewage">污水计算</a><a href="#rule-checks">检查与复核</a></nav>
+                <section id="rule-prepare"><h3>1. 准备模板和同一天的数据</h3>
+                    <ol><li>复制一份“新模板.xlsx”，另存为“安全生产每日简报 YYYYMMDD.xlsx”，保留空模板。</li><li>准备同一生产日的 MIS 导出表、称重明细、增城和白云文字日报，以及当日飞灰外运量、检查内容。</li><li>标题日期以 MIS 标题中的生产日期为准，不是填报当天。例：11月13日填11月12日数据，标题和文件名都用11月12日。</li><li>逐项确认单位。原生混凝土为立方米，发电/上网电量为万度，其余按模板行名。称重的“垃圾重量”须确认已是吨，程序不自动除以1000。</li></ol>
+                    <p class="rule-note">“0”表示确认没有发生；缺数据、未识别、来源不清楚都不等于0。自动生成若暂填0，会在结果中提示待核对。</p>
+                </section>
+                <section id="rule-mis"><h3>2. MIS部分按单位、区域和指标照抄</h3>
+                    <p>从上往下依次填写：永兴股份市内、市外 → 环境集团市内、市外 → 环服公司市内、市外。核对“公司—市内/市外—厂别—指标”，不要只凭重复的“1.1、1.2”编号找行。</p>
+                    <ul><li>进厂垃圾、焚烧量、发电量、上网电量、各类收运量和填埋/开挖量：按 MIS 对应数值填写，本工具不重新计算这些合计，也不把市内、市外混加。</li><li>数字若显示为文本，如“1,234.56”，按数值1234.56填写；计算公式来源须先在Excel中计算并保存。</li><li><strong>1.5-飞灰外运资源化（吨）</strong>单独填当日人工确认量，本工具以手动入口为准；确认无外运才填0。</li><li>锅炉总数、汽机总数两段文字从 MIS 对应文字复制，保留市内/市外运行台数。</li></ul>
+                </section>
+                <section id="rule-zengcheng"><h3>3. 增城建废：五项分别取数</h3>
+                    <dl class="rule-mapping"><dt>装修垃圾进厂量</dt><dd>取文字中的“装修垃圾”数值。</dd><dt>砖渣</dt><dd>取“砖渣”数值。</dd><dt>混凝土</dt><dd>取“混凝土块”或“混凝土”数值。</dd><dt>再生水稳</dt><dd>直接取“再生水稳”，不再把旧版级配碎石与水泥稳定碎石相加。</dd><dt>再生石粉</dt><dd>直接取“再生石粉”，与水稳分开填。</dd></dl>
+                    <p class="rule-note">当前模板砖渣、混凝土的行名写“进厂量”。如果来源文字写“出厂量”，先找业务人员确认口径；程序只提取数字，不会把出厂换算成进厂。建议文字格式为“指标：数字”，每项一行。</p>
+                </section>
+                <section id="rule-baiyun"><h3>4. 白云建废：一项求和，三项照抄</h3>
+                    <p class="formula">建筑废弃物进厂总量 = 石渣 + 水泥头 + 原生石</p>
+                    <p>例：石渣100吨、水泥头200吨、原生石147.96吨，则进厂总量为447.96吨。不要再把原生混凝土或再生骨料加进这个合计。</p>
+                    <ul><li>混凝土出厂量（立方米）：取“原生混凝土”。</li><li>再生骨料1-2石：取“再生1-2石”或“再生骨料1-2石”。</li><li>再生水稳（吨）：取“再生水稳”。</li></ul>
+                </section>
+                <section id="rule-sewage"><h3>5. 污水运输：同一明细按两种口径分类</h3>
+                    <p>读取称重Excel的第一张工作表，第一行为表头，需要“垃圾重量”“货物去向”“收集者”三列。只保留当天明细，删除合计行、重复记录和空白记录。所有行只按原始单位累计。</p>
+                    <dl class="rule-mapping"><dt>运输总量</dt><dd>所有明细的“垃圾重量”之和。网页显示，底部四行表格不另加总量行。</dd><dt>环服公司处置</dt><dd>“货物去向”包含“兴丰”的明细重量之和。</dd><dt>各资源热力电厂处置</dt><dd>去向包含“资源热力电厂”或“生物质处理厂”的明细重量之和；同一行即使命中两个词，也只算一次。</dd><dt>环境集团运输</dt><dd>“收集者”包含“环投环境”的明细重量之和。</dd><dt>社会单位运输</dt><dd>运输总量减去环境集团运输量。收集者未写“环投环境”的非空单位按此口径计入社会单位。</dd></dl>
+                    <h4>在Excel中怎么计算</h4><p>假定A列是垃圾重量，B列是货物去向，C列是收集者，数据在第2至1000行。请按自己的实际列和最后一行替换范围，不能含合计行。</p>
+                    <div class="formula-list"><p>运输总量</p><code>=SUM(A2:A1000)</code><p>环服公司处置</p><code>=SUMIF(B2:B1000,"*兴丰*",A2:A1000)</code><p>环境集团运输</p><code>=SUMIF(C2:C1000,"*环投环境*",A2:A1000)</code><p>社会单位运输</p><code>=SUM(A2:A1000)-SUMIF(C2:C1000,"*环投环境*",A2:A1000)</code><p>热力/生物质处置：D2写下面公式，填充到D1000，再求D列合计，避免两个关键词重复计数。</p><code>=IF(OR(ISNUMBER(SEARCH("资源热力电厂",B2)),ISNUMBER(SEARCH("生物质处理厂",B2))),A2,0)</code><code>=SUM(D2:D1000)</code></div>
+                    <p>最后将环境集团、社会单位填入“运输”两行；环服公司、各资源热力电厂填入“处置”两行。<strong>运输和处置是同一批污水的两个分类维度，不能把四行相加作为总量。</strong></p>
+                    <p class="rule-note">先求和、后保留两位小数。环境集团+社会单位应约等于运输总量（四舍五入可能差0.01）；环服+热力若不等于总量，检查未分类去向或同时命中两类的记录。非数值重量、缺表头或缺去向/收集者应先核实，不可直接当0。</p>
+                </section>
+                <section id="rule-checks"><h3>6. 检查内容与最后复核</h3>
+                    <ul><li>标题写“检查：”，前面不加1。具体内容依次写“1.”、“2.”、“3.”，最多6条；空白项和“无”不编号。无有效检查项时写“检查： 无。”。</li><li>核对日期、单位、吨/立方米、飞灰量、白云三项之和、污水两种分类及所有零值。对“待核对项”逐条回查原始数据。</li><li>保留原模板的合并单元格，污水四行行高保持22，不再在检查区域重复写污水文字。</li><li>打印或转发前，用实际Excel/WPS预览，确认“生活垃圾污水”和较长检查文字完整显示。必要时只增大检查区域行高。</li></ul>
+                </section>
+            </div>
+            <div class="rules-footer"><span>关闭后回到刚才的位置，已填内容保留。</span><button type="button" class="btn-secondary" data-close-rules>返回填报</button></div>
         </div>
-    </div>
+    </dialog>
 
     <!-- 提示框 -->
-    <div id="toast" class="toast"></div>
+    <div id="toast" class="toast" role="status"></div>
 
-    <script src="static/main.js?v=4.1"></script>
+    <script src="static/main.js?v=5.0.0" defer></script>
 </body>
 </html>

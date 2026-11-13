@@ -5,7 +5,9 @@ import json
 import math
 import warnings
 from datetime import datetime, timedelta
-import pandas as pd
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+import unicodedata
+from zipfile import ZipFile, BadZipFile
 import openpyxl
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -19,31 +21,76 @@ WEIGHING_FILE = "weighing_file.xlsx"
 # baiyun_text, zengcheng_text, checks_json, fly_ash_amount
 
 def process_weighing_data(weighing_file):
-    """计算污水运输数据（新版：按处置单位和运输单位分别汇总）"""
+    """只读逐行汇总，避免加载 pandas；坏文件不得伪装成零数据。"""
+    wb = openpyxl.load_workbook(weighing_file, read_only=True, data_only=True)
     try:
-        df = pd.read_excel(weighing_file)
-
-        # 广州市生活垃圾污水运输总量 = 所有垃圾重量之和
-        total = df['垃圾重量'].sum()
-
-        # 按处置单位分
-        to_huanfu = df[df['货物去向'].fillna('').str.contains('兴丰')]['垃圾重量'].sum()  # 环服公司处置（去兴丰生活垃圾填埋场）
-        to_power = df[df['货物去向'].fillna('').str.contains('资源热力电厂|生物质处理厂')]['垃圾重量'].sum()  # 各资源热力电厂处置（含生物质处理厂）
-
-        # 按运输单位分
-        by_huantou = df[df['收集者'].fillna('').str.contains('环投环境')]['垃圾重量'].sum()  # 环境集团承运
-        by_social = total - by_huantou  # 社会单位承运
-
-        return round(total, 2), round(to_huanfu, 2), round(to_power, 2), round(by_huantou, 2), round(by_social, 2)
-    except Exception as e:
-        print(f"❌ 读取称重数据失败: {e}")
-        return 0.0, 0.0, 0.0, 0.0, 0.0
+        sheet = wb.active
+        if sheet.max_row > 100000 or sheet.max_column > 200:
+            raise ValueError("称重表范围过大，请删除无用空白行列后重新导出（最多10万行、200列）")
+        rows = sheet.iter_rows(values_only=True)
+        headers = [str(v or '').strip() for v in next(rows, ())]
+        required = ['垃圾重量', '货物去向', '收集者']
+        if any(headers.count(name) != 1 for name in required):
+            raise ValueError("称重表首行必须各有一列：垃圾重量、货物去向、收集者（不能缺失或重复）")
+        weight_col, dest_col, collector_col = [headers.index(name) for name in required]
+        total = huanfu = power = huantou = Decimal('0')
+        count = 0
+        for row_no, row in enumerate(rows, 2):
+            if all(v is None or str(v).strip() == '' for v in row):
+                continue
+            raw = row[weight_col]
+            try:
+                weight = Decimal(str(raw).strip().replace(',', '').replace('，', ''))
+                if not weight.is_finite() or isinstance(raw, bool):
+                    raise InvalidOperation
+            except (InvalidOperation, ValueError):
+                raise ValueError(f"称重表第{row_no}行‘垃圾重量’不是有效数字，请核对空值、公式缓存或合计行") from None
+            dest = str(row[dest_col] or '').strip()
+            collector = str(row[collector_col] or '').strip()
+            if weight and (not dest or not collector):
+                raise ValueError(f"称重表第{row_no}行的货物去向或收集者为空，不能可靠分类")
+            if weight < 0:
+                report_warnings.append(f"称重表第{row_no}行含负重量，已按原值汇总，请核对是否退运冲减")
+            total += weight
+            if '兴丰' in dest:
+                huanfu += weight
+            if '资源热力电厂' in dest or '生物质处理厂' in dest:
+                power += weight
+            if '环投环境' in collector:
+                huantou += weight
+            if weight and not any(k in dest for k in ['兴丰', '资源热力电厂', '生物质处理厂']):
+                report_warnings.append(f"称重表第{row_no}行去向未归入环服/热力，已计入总量，请核对分类")
+            count += 1
+        if not count:
+            raise ValueError("称重表没有数据行；零运输日也需提供经确认的零值记录")
+        if huanfu + power != total:
+            report_warnings.append("处置分类之和与运输总量不一致，请核对未分类或同时命中两类的去向")
+        # 先求和再四舍五入，不逐行四舍五入。
+        return tuple(float(v.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                     for v in (total, huanfu, power, huantou, total - huantou))
+    finally:
+        wb.close()
 
 
 def extract_float(pattern, text):
     """安全提取文字中的数字"""
     match = re.search(pattern, text)
     return float(match.group(1)) if match else 0.0
+
+
+def extract_metric(labels, text, display_name):
+    normalized = unicodedata.normalize('NFKC', text).replace('－', '-').replace('—', '-')
+    names = '|'.join(re.escape(unicodedata.normalize('NFKC', label)) for label in sorted(labels, key=len, reverse=True))
+    pattern = (rf'(?:{names})[)）]?(?:进厂量|出厂量|重量|净重|量)?'
+               r'(?:[（(](?:吨|立方米|m³)[）)])?[ \t:：=]*([+-]?\d[\d,，]*(?:\.\d+)?)')
+    match = re.search(pattern, normalized)
+    if not match:
+        report_warnings.append(f"{display_name}未识别到数字，暂填0，请与来源文字核对")
+        return 0.0
+    value = float(match.group(1).replace(',', '').replace('，', ''))
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{display_name}须为大于等于0的有效数字")
+    return value
 
 
 def get_row_by_keywords(sheet, keywords_list, default_row):
@@ -61,20 +108,13 @@ def get_row_by_keywords(sheet, keywords_list, default_row):
 def inject_manual_data(sheet, keywords_list, value, start_row=1, end_row=None):
     """【网格数据注入】寻找周围独立的 0 并替换"""
     max_r = end_row or sheet.max_row
-    for r in range(start_row, max_r + 1):
-        row_text = "".join(
-            [str(sheet.cell(r, c).value) for c in range(1, sheet.max_column + 1) if sheet.cell(r, c).value])
-        row_text = row_text.replace(' ', '').replace('\n', '')
-
-        for kw in keywords_list:
-            if kw in row_text:
-                for search_r in range(r, min(r + 4, sheet.max_row + 1)):
-                    for c in range(1, sheet.max_column + 1):
-                        cell = sheet.cell(search_r, c)
-                        if str(cell.value).strip() in ['0', '0.0', '0吨', '0方', '0.00']:
-                            cell.value = value
-                            return True
-    return False
+    matches = [r for r in range(start_row, max_r)
+               if any(kw in str(sheet.cell(r, c).value or '')
+                      for c in (3, 4) for kw in keywords_list)]
+    if len(matches) != 1:
+        raise ValueError(f"模板指标缺失或重复：{keywords_list[0]}")
+    sheet.cell(matches[0], 5).value = value
+    return True
 
 
 def copy_system_data_sequential(raw_sheet, tmpl_sheet):
@@ -99,6 +139,7 @@ def copy_system_data_sequential(raw_sheet, tmpl_sheet):
 
     # 2. 从上往下顺藤摸瓜寻找对应项
     tmpl_search_start = 1
+    matched_rows = set()
     for raw_r in range(1, raw_sheet.max_row + 1):
         numbers, texts = [], []
 
@@ -152,6 +193,7 @@ def copy_system_data_sequential(raw_sheet, tmpl_sheet):
                     break
 
             if found_tmpl_r != -1:
+                matched_rows.add(found_tmpl_r)
                 num_idx = 0
                 for c in range(1, tmpl_sheet.max_column + 1):
                     cell = tmpl_sheet.cell(found_tmpl_r, c)
@@ -161,6 +203,14 @@ def copy_system_data_sequential(raw_sheet, tmpl_sheet):
                         if num_idx >= len(numbers):
                             break
                 tmpl_search_start = found_tmpl_r + 1
+
+    if len(matched_rows) < 5:
+        raise ValueError("MIS表未匹配到足够的生产指标，请确认选中的是生产运营导出表")
+    end = get_row_by_keywords(tmpl_sheet, ['增城建废'], tmpl_sheet.max_row)
+    for r in range(4, end):
+        label = str(tmpl_sheet.cell(r, 4).value or tmpl_sheet.cell(r, 3).value or '')
+        if r not in matched_rows and '飞灰外运资源化' not in label:
+            report_warnings.append(f"MIS未匹配指标：{label}，请核对模板中的零值")
 
 
 def fill_report_table_data(sheet, fly_ash, to_huanfu, to_power, by_huantou, by_social):
@@ -228,6 +278,15 @@ def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, checks):
 
 
 def main():
+    global report_warnings
+    report_warnings = []
+    for path, label in [(MIS_FILE, 'MIS'), (WEIGHING_FILE, '称重')]:
+        try:
+            with ZipFile(path) as archive:
+                if sum(item.file_size for item in archive.infolist()) > 100 * 1024 * 1024:
+                    raise ValueError(f"{label}文件展开后超过100MB，请精简空白格式或重新导出")
+        except BadZipFile:
+            raise ValueError(f"{label}文件不是有效的.xlsx，请用Excel重新另存为xlsx，不要只改后缀") from None
     try:
         fly_ash = float(fly_ash_amount)
     except (NameError, TypeError, ValueError):
@@ -245,31 +304,34 @@ def main():
     tot_sewage, to_huanfu, to_power, by_huantou, by_social = process_weighing_data(WEIGHING_FILE)
 
     # 2. 解析白云建废文字数据
-    by_shizha = extract_float(r'石渣）?[^\d]*([\d.]+)', baiyun_text)
-    by_shuinitou = extract_float(r'水泥头）?[^\d]*([\d.]+)', baiyun_text)
-    by_yuanshengshi = extract_float(r'原生石）?[^\d]*([\d.]+)', baiyun_text)
+    by_shizha = extract_metric(['石渣', '石渣）'], baiyun_text, '白云石渣')
+    by_shuinitou = extract_metric(['水泥头', '水泥头）'], baiyun_text, '白云水泥头')
+    by_yuanshengshi = extract_metric(['原生石', '原生石）'], baiyun_text, '白云原生石')
     by_jianfei_total = by_shizha + by_shuinitou + by_yuanshengshi
 
-    by_hunningtu = extract_float(r'原生混凝土[^\d]*([\d.]+)', baiyun_text)
-    by_zaisheng12 = extract_float(r'再生1-2石[^\d]*([\d.]+)', baiyun_text)
-    by_zaishengshuiwen = extract_float(r'再生水稳[^\d]*([\d.]+)', baiyun_text)
+    by_hunningtu = extract_metric(['原生混凝土'], baiyun_text, '白云原生混凝土')
+    by_zaisheng12 = extract_metric(['再生1-2石', '再生骨料1-2石'], baiyun_text, '白云再生1-2石')
+    by_zaishengshuiwen = extract_metric(['再生水稳'], baiyun_text, '白云再生水稳')
 
     # 3. 解析增城建废文字数据
-    z_zx = extract_float(r'装修垃圾(?:进厂量)?[^\d]*([\d.]+)', zengcheng_text)
-    z_sw = extract_float(r'再生水稳(?:量)?[^\d]*([\d.]+)', zengcheng_text)
-    z_sf = extract_float(r'再生石粉(?:量)?[^\d]*([\d.]+)', zengcheng_text)
-    z_zz = extract_float(r'砖渣[^\d]*([\d.]+)', zengcheng_text)
-    z_hnt = extract_float(r'混凝土(?:块)?[^\d]*([\d.]+)', zengcheng_text)
+    z_zx = extract_metric(['装修垃圾'], zengcheng_text, '增城装修垃圾')
+    z_sw = extract_metric(['再生水稳'], zengcheng_text, '增城再生水稳')
+    z_sf = extract_metric(['再生石粉'], zengcheng_text, '增城再生石粉')
+    z_zz = extract_metric(['砖渣'], zengcheng_text, '增城砖渣')
+    z_hnt = extract_metric(['混凝土块', '混凝土'], zengcheng_text, '增城混凝土')
+    if '出厂' in zengcheng_text:
+        report_warnings.append("增城来源含‘出厂’，而模板砖渣/混凝土行标为‘进厂’，请人工确认口径，程序不做进出厂转换")
 
     # 4. 读取工作簿填充
     tmpl_wb = openpyxl.load_workbook(TEMPLATE_FILE)
     tmpl_sheet = tmpl_wb.active
-    raw_wb = openpyxl.load_workbook(MIS_FILE)
+    raw_wb = openpyxl.load_workbook(MIS_FILE, data_only=True)
     raw_sheet = raw_wb.active
+    if raw_sheet.max_row > 2000 or raw_sheet.max_column > 100:
+        raise ValueError("MIS表范围过大，请删除无用空白行列后重新导出（最多2000行、100列）")
 
     # 动态日期提取
-    yesterday = datetime.now() - timedelta(days=1)
-    report_date_str = yesterday.strftime("%Y%m%d")
+    report_date_str = None
 
     for r in range(1, 4):
         for c in range(1, 5):
@@ -278,7 +340,11 @@ def main():
                 match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', val)
                 if match:
                     report_date_str = f"{match.group(1)}{int(match.group(2)):02d}{int(match.group(3)):02d}"
+                    datetime.strptime(report_date_str, '%Y%m%d')
                 break
+
+    if report_date_str is None:
+        raise ValueError("MIS表前3行标题中缺少有效的 YYYY-MM-DD 生产日期，请核对导出文件")
 
     output_filename = f"安全生产每日简报 {report_date_str}.xlsx"
 
@@ -305,6 +371,8 @@ def main():
 
     # 保存
     tmpl_wb.save("output_file.xlsx")
+    raw_wb.close()
+    tmpl_wb.close()
 
     # 封包预览数据返回
     parsed_preview = {
@@ -338,7 +406,8 @@ def main():
     output_json_str = json.dumps({
         "success": True,
         "parsed_data": parsed_preview,
-        "filename": output_filename
-    })
+        "filename": output_filename,
+        "warnings": list(dict.fromkeys(report_warnings))[:30]
+    }, ensure_ascii=False, allow_nan=False)
 
 main()
