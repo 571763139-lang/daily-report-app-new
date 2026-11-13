@@ -32,7 +32,7 @@
         </header>
 
         <div class="utility-bar">
-            <span>V5 · 计算与手工制表说明</span>
+            <span>V5.0.1 · 计算与手工制表说明</span>
             <button type="button" id="rules-btn" class="btn-secondary" aria-haspopup="dialog" aria-controls="rules-dialog">手工制表规则</button>
         </div>
 
@@ -202,6 +202,7 @@
                         <!-- 污水运输计算结果 -->
                         <div class="preview-card">
                             <h4 class="card-subtitle"><i class="fa-solid fa-droplet icon-color-3"></i> 污水运输数据（自动填入底部表格）</h4>
+                            <p id="weighing-source" class="input-hint"></p>
                             <ul class="data-list" id="sewage-preview-list">
                                 <!-- 动态注入 -->
                             </ul>
@@ -247,7 +248,7 @@
                     <ul><li>混凝土出厂量（立方米）：取“原生混凝土”。</li><li>再生骨料1-2石：取“再生1-2石”或“再生骨料1-2石”。</li><li>再生水稳（吨）：取“再生水稳”。</li></ul>
                 </section>
                 <section id="rule-sewage"><h3>5. 污水运输：同一明细按两种口径分类</h3>
-                    <p>读取称重Excel的第一张工作表，第一行为表头，需要“垃圾重量”“货物去向”“收集者”三列。只保留当天明细，删除合计行、重复记录和空白记录。所有行只按原始单位累计。</p>
+                    <p>程序在各工作表前50行自动查找“垃圾重量”“货物去向”“收集者”三列，支持表头上方的标题、空格、换行，以及“垃圾重量（吨）”。若多张表都符合，按工作表顺序只读取第一张，不跨表合并；网页预览会显示实际读取的工作表、表头行和明细条数。请只保留当天明细，删除合计行和重复记录。所有行只按原始单位累计，不自动换算单位。</p>
                     <dl class="rule-mapping"><dt>运输总量</dt><dd>所有明细的“垃圾重量”之和。网页显示，底部四行表格不另加总量行。</dd><dt>环服公司处置</dt><dd>“货物去向”包含“兴丰”的明细重量之和。</dd><dt>各资源热力电厂处置</dt><dd>去向包含“资源热力电厂”或“生物质处理厂”的明细重量之和；同一行即使命中两个词，也只算一次。</dd><dt>环境集团运输</dt><dd>“收集者”包含“环投环境”的明细重量之和。</dd><dt>社会单位运输</dt><dd>运输总量减去环境集团运输量。收集者未写“环投环境”的非空单位按此口径计入社会单位。</dd></dl>
                     <h4>在Excel中怎么计算</h4><p>假定A列是垃圾重量，B列是货物去向，C列是收集者，数据在第2至1000行。请按自己的实际列和最后一行替换范围，不能含合计行。</p>
                     <div class="formula-list"><p>运输总量</p><code>=SUM(A2:A1000)</code><p>环服公司处置</p><code>=SUMIF(B2:B1000,"*兴丰*",A2:A1000)</code><p>环境集团运输</p><code>=SUMIF(C2:C1000,"*环投环境*",A2:A1000)</code><p>社会单位运输</p><code>=SUM(A2:A1000)-SUMIF(C2:C1000,"*环投环境*",A2:A1000)</code><p>热力/生物质处置：D2写下面公式，填充到D1000，再求D列合计，避免两个关键词重复计数。</p><code>=IF(OR(ISNUMBER(SEARCH("资源热力电厂",B2)),ISNUMBER(SEARCH("生物质处理厂",B2))),A2,0)</code><code>=SUM(D2:D1000)</code></div>
@@ -265,6 +266,6 @@
     <!-- 提示框 -->
     <div id="toast" class="toast" role="status"></div>
 
-    <script src="static/main.js?v=5.0.0" defer></script>
+    <script src="static/main.js?v=5.0.1" defer></script>
 </body>
 </html>

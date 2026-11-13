@@ -1,6 +1,6 @@
 let pyodide = null;
 let coreCode = '';
-const VERSION = '5.0.0';
+const VERSION = '5.0.1';
 function progress(text, percent) { self.postMessage({type:'progress', text, percent}); }
 async function resource(url, kind) {
     const controller = new AbortController();

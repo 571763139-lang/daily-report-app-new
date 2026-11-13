@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
         $('env-text').textContent = '正在后台加载计算环境，期间可阅读手工制表规则…'; $('env-progress').style.width = '5%';
         try {
             if (location.protocol === 'file:') throw new Error('请使用“一键本地启动.bat”打开此版本，不要直接双击index.html。');
-            worker = new Worker('static/report-worker.js?v=5.0.0');
+            worker = new Worker('static/report-worker.js?v=5.0.1');
             worker.onmessage = ({data}) => {
                 if (data.type === 'progress') {
                     $('env-text').textContent = data.text; $('env-progress').style.width = `${data.percent}%`;
@@ -138,6 +138,8 @@ document.addEventListener('DOMContentLoaded', () => {
             li.append(l,v); return li;
         }));
         const p=data.parsed_data, z=p.zengcheng, b=p.baiyun, s=p.sewage;
+        const source=data.weighing_source;
+        $('weighing-source').textContent=source ? `已读取：${source.sheet} · 第${source.header_row}行表头 · ${source.records}条明细` : '';
         fill('fly-ash-preview-list',[['飞灰外运资源化',p.fly_ash]]);
         fill('zc-preview-list',Object.entries(z).map(([key,value])=>[key,value]));
         fill('by-preview-list',[['进厂总量（石渣+水泥头+原生石）',b.total.toFixed(2)],['原生混凝土',b.hunningtu,'立方米'],['再生1-2石',b.zaisheng12],['再生水稳',b.zaishengshuiwen]]);

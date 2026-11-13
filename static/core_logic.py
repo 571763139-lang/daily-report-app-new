@@ -20,23 +20,64 @@ WEIGHING_FILE = "weighing_file.xlsx"
 # 全局变量由 JavaScript 动态注入：
 # baiyun_text, zengcheng_text, checks_json, fly_ash_amount
 
+def normalize_weighing_header(value):
+    """兼容导出表头的全角、空白、换行和明确的吨单位，不猜测业务列名。"""
+    text = unicodedata.normalize('NFKC', str(value if value is not None else ''))
+    text = re.sub(r'\s+', '', text.replace('\ufeff', '').replace('\u200b', ''))
+    if re.fullmatch(r'垃圾重量(?:\((?:吨|[tT])\)|\[(?:吨|[tT])\]|/(?:吨|[tT])|吨)', text):
+        return '垃圾重量'
+    return text
+
+
+def locate_weighing_table(wb):
+    """按工作表顺序扫描前50行，不依赖Excel保存时选中的活动页。"""
+    required = ['垃圾重量', '货物去向', '收集者']
+    candidates, duplicates, best = [], [], (0, '', 0, [])
+    for sheet in wb.worksheets:
+        for row_no, row in enumerate(sheet.iter_rows(min_row=1, max_row=50, max_col=200,
+                                                    values_only=True), 1):
+            headers = [normalize_weighing_header(value) for value in row]
+            score = sum(name in headers for name in required)
+            if score > best[0]:
+                best = (score, sheet.title, row_no, [text for text in headers if text])
+            if score == len(required):
+                if any(headers.count(name) != 1 for name in required):
+                    duplicates.append((sheet.title, row_no))
+                    break
+                candidates.append((sheet, row_no, tuple(headers.index(name) for name in required)))
+                break
+    if candidates:
+        if len(candidates) > 1:
+            report_warnings.append(f"多张工作表含称重表头，本次只读取‘{candidates[0][0].title}’，未跨表合并，请核对")
+        return candidates[0]
+    if duplicates:
+        title, row_no = duplicates[0]
+        raise ValueError(f"称重表‘{title}’第{row_no}行存在重复的垃圾重量、货物去向或收集者列，请核对")
+    detail = ''
+    if best[0]:
+        _, title, row_no, labels = best
+        detail = f" 最接近的是‘{title}’第{row_no}行，检测到：{'、'.join(labels[:12])}。"
+    raise ValueError("未找到称重表头：垃圾重量、货物去向、收集者。已检查各工作表前50行，支持标题行、空格、换行及‘垃圾重量（吨）’。" + detail)
+
+
 def process_weighing_data(weighing_file):
     """只读逐行汇总，避免加载 pandas；坏文件不得伪装成零数据。"""
     wb = openpyxl.load_workbook(weighing_file, read_only=True, data_only=True)
     try:
-        sheet = wb.active
-        if sheet.max_row > 100000 or sheet.max_column > 200:
-            raise ValueError("称重表范围过大，请删除无用空白行列后重新导出（最多10万行、200列）")
-        rows = sheet.iter_rows(values_only=True)
-        headers = [str(v or '').strip() for v in next(rows, ())]
-        required = ['垃圾重量', '货物去向', '收集者']
-        if any(headers.count(name) != 1 for name in required):
-            raise ValueError("称重表首行必须各有一列：垃圾重量、货物去向、收集者（不能缺失或重复）")
-        weight_col, dest_col, collector_col = [headers.index(name) for name in required]
+        sheet, header_row, columns = locate_weighing_table(wb)
+        # 个别导出软件的dimension错误地写成A1；不让元数据截掉实际行列。
+        sheet.reset_dimensions()
+        rows = sheet.iter_rows(min_row=header_row + 1, max_col=max(columns) + 1, values_only=True)
+        weight_col, dest_col, collector_col = columns
         total = huanfu = power = huantou = Decimal('0')
         count = 0
-        for row_no, row in enumerate(rows, 2):
+        for row_no, row in enumerate(rows, header_row + 1):
+            if row_no > 100000:
+                raise ValueError("称重表超过10万行，请精简空白格式或分批重新导出")
             if all(v is None or str(v).strip() == '' for v in row):
+                continue
+            # 部分导出文件每页重复一次列标题，不应把列标题当成重量。
+            if [normalize_weighing_header(row[c]) for c in columns] == ['垃圾重量', '货物去向', '收集者']:
                 continue
             raw = row[weight_col]
             try:
@@ -65,6 +106,8 @@ def process_weighing_data(weighing_file):
             raise ValueError("称重表没有数据行；零运输日也需提供经确认的零值记录")
         if huanfu + power != total:
             report_warnings.append("处置分类之和与运输总量不一致，请核对未分类或同时命中两类的去向")
+        global weighing_source_info
+        weighing_source_info = {'sheet': sheet.title, 'header_row': header_row, 'records': count}
         # 先求和再四舍五入，不逐行四舍五入。
         return tuple(float(v.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
                      for v in (total, huanfu, power, huantou, total - huantou))
@@ -278,8 +321,9 @@ def fix_bottom_paragraphs(raw_sheet, tmpl_sheet, checks):
 
 
 def main():
-    global report_warnings
+    global report_warnings, weighing_source_info
     report_warnings = []
+    weighing_source_info = {}
     for path, label in [(MIS_FILE, 'MIS'), (WEIGHING_FILE, '称重')]:
         try:
             with ZipFile(path) as archive:
@@ -407,6 +451,7 @@ def main():
         "success": True,
         "parsed_data": parsed_preview,
         "filename": output_filename,
+        "weighing_source": weighing_source_info,
         "warnings": list(dict.fromkeys(report_warnings))[:30]
     }, ensure_ascii=False, allow_nan=False)
 
